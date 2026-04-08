@@ -98,9 +98,9 @@ Evaluated using `llama-3.1-8b-instant` via Groq inference API over a full 60-epi
 
 1. Set environment variables:
 ```bash
-export HF_TOKEN="your_api_key_here"
-export API_BASE_URL="https://api.groq.com/openai/v1"
-export MODEL_NAME="llama-3.1-8b-instant"
+export HF_TOKEN="your_hf_api_token"
+export API_BASE_URL="https://your-evaluator-endpoint/v1"
+export MODEL_NAME="your_model_name"
 export ENV_URL="http://localhost:7860"
 ```
 
@@ -121,9 +121,9 @@ uvicorn server.app:app --host 0.0.0.0 --port 7860 --reload
 ```bash
 docker build -t dev-triage-env .
 docker run -p 7860:7860 \
-  -e HF_TOKEN=your_api_key_here \
-  -e API_BASE_URL=https://api.groq.com/openai/v1 \
-  -e MODEL_NAME=llama-3.1-8b-instant \
+  -e HF_TOKEN=your_hf_api_token \
+  -e API_BASE_URL=https://your-evaluator-endpoint/v1 \
+  -e MODEL_NAME=your_model_name \
   dev-triage-env
 ```
 
