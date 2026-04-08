@@ -5,6 +5,11 @@ from models import TriageAction
 
 app = FastAPI(title="DevTriageEnv")
 
+@app.get("/")
+def root():
+    # Provide a friendly landing message instead of FastAPI's default 404
+    return {"message": "DevTriageEnv API is live! Navigate to /docs to use the interactive Swagger UI.", "status": "healthy"}
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
