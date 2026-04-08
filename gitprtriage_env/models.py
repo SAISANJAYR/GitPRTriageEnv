@@ -1,27 +1,24 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+from pydantic import BaseModel
+from typing import Optional, List, Literal
 
-"""
-Data models for the Gitprtriage Env Environment.
+class TriageAction(BaseModel):
+    classification: Literal["bug", "feature", "duplicate"]
+    bug_line: Optional[int] = None
+    team: Optional[Literal["webdev", "devops", "aiml"]] = None
+    suggested_fix: Optional[str] = None
 
-The gitprtriage_env environment is a simple test environment that echoes back messages.
-"""
+class TriageObservation(BaseModel):
+    issue_id: str
+    title: str
+    body: str
+    code_snippet: Optional[str] = None
+    existing_labels: List[str] = []
+    task_level: Literal["easy", "medium", "hard"]
+    done: bool
+    reward: Optional[float] = None
 
-from openenv.core.env_server.types import Action, Observation
-from pydantic import Field
-
-
-class GitprtriageAction(Action):
-    """Action for the Gitprtriage Env environment - just a message to echo."""
-
-    message: str = Field(..., description="Message to echo back")
-
-
-class GitprtriageObservation(Observation):
-    """Observation from the Gitprtriage Env environment - the echoed message."""
-
-    echoed_message: str = Field(default="", description="The echoed message")
-    message_length: int = Field(default=0, description="Length of the echoed message")
+class TriageState(BaseModel):
+    episode_id: str
+    step_count: int
+    task_level: Literal["easy", "medium", "hard"]
+    current_issue_id: str

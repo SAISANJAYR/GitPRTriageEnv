@@ -1,255 +1,76 @@
 ---
-title: Gitprtriage Env Environment Server
-emoji: 🕰️
-colorFrom: gray
-colorTo: purple
+title: DevTriage Environment
 sdk: docker
-pinned: false
-app_port: 8000
-base_path: /web
 tags:
   - openenv
 ---
+# DevTriageEnv
+A GitHub issue triage environment where an LLM agent reads issues and PRs, classifies them, finds bug lines in code, routes to the right team, and suggests fixes. 
+Built for the **Meta × Scaler OpenEnv Hackathon 2026**.
 
-# Gitprtriage Env Environment
+## Description
+This environment models a genuine, real-world task: issue management and triage in a software development context.
+The environment exposes a REST API via FastAPI, fully compliant with OpenEnv specifications (typed models, `step()`/`reset()`/`state()`, and metadata in `openenv.yaml`).
 
-A simple test environment that echoes back messages. Perfect for testing the env APIs as well as demonstrating environment usage patterns.
-
-## Quick Start
-
-The simplest way to use the Gitprtriage Env environment is through the `GitprtriageEnv` class:
-
-```python
-from gitprtriage_env import GitprtriageAction, GitprtriageEnv
-
-try:
-    # Create environment from Docker image
-    gitprtriage_envenv = GitprtriageEnv.from_docker_image("gitprtriage_env-env:latest")
-
-    # Reset
-    result = gitprtriage_envenv.reset()
-    print(f"Reset: {result.observation.echoed_message}")
-
-    # Send multiple messages
-    messages = ["Hello, World!", "Testing echo", "Final message"]
-
-    for msg in messages:
-        result = gitprtriage_envenv.step(GitprtriageAction(message=msg))
-        print(f"Sent: '{msg}'")
-        print(f"  → Echoed: '{result.observation.echoed_message}'")
-        print(f"  → Length: {result.observation.message_length}")
-        print(f"  → Reward: {result.reward}")
-
-finally:
-    # Always clean up
-    gitprtriage_envenv.close()
-```
-
-That's it! The `GitprtriageEnv.from_docker_image()` method handles:
-- Starting the Docker container
-- Waiting for the server to be ready
-- Connecting to the environment
-- Container cleanup when you call `close()`
-
-## Building the Docker Image
-
-Before using the environment, you need to build the Docker image:
-
-```bash
-# From project root
-docker build -t gitprtriage_env-env:latest -f server/Dockerfile .
-```
-
-## Deploying to Hugging Face Spaces
-
-You can easily deploy your OpenEnv environment to Hugging Face Spaces using the `openenv push` command:
-
-```bash
-# From the environment directory (where openenv.yaml is located)
-openenv push
-
-# Or specify options
-openenv push --namespace my-org --private
-```
-
-The `openenv push` command will:
-1. Validate that the directory is an OpenEnv environment (checks for `openenv.yaml`)
-2. Prepare a custom build for Hugging Face Docker space (enables web interface)
-3. Upload to Hugging Face (ensuring you're logged in)
+## Setup and Usage
 
 ### Prerequisites
+- Docker (optional but recommended for running exactly like HF Spaces)
+- Python 3.11
 
-- Authenticate with Hugging Face: The command will prompt for login if not already authenticated
+### Running Locally (Native)
 
-### Options
+1. Set your environment variables (PowerShell example):
+   ```powershell
+   $env:HF_TOKEN = "gsk_yourGroqKeyHere"
+   $env:API_BASE_URL = "https://api.groq.com/openai/v1"
+   $env:MODEL_NAME = "llama-3.1-8b-instant"
+   $env:ENV_URL = "http://localhost:7860"
+   ```
 
-- `--directory`, `-d`: Directory containing the OpenEnv environment (defaults to current directory)
-- `--repo-id`, `-r`: Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)
-- `--base-image`, `-b`: Base Docker image to use (overrides Dockerfile FROM)
-- `--private`: Deploy the space as private (default: public)
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-### Examples
+3. Start the server (on port 7860):
+   ```bash
+   uvicorn server.app:app --host 0.0.0.0 --port 7860 --reload
+   ```
 
+4. Test in browser:
+   Visit http://localhost:7860/docs
+
+### Running via Docker
 ```bash
-# Push to your personal namespace (defaults to username/env-name from openenv.yaml)
-openenv push
-
-# Push to a specific repository
-openenv push --repo-id my-org/my-env
-
-# Push with a custom base image
-openenv push --base-image ghcr.io/meta-pytorch/openenv-base:latest
-
-# Push as a private space
-openenv push --private
-
-# Combine options
-openenv push --repo-id my-org/my-env --base-image custom-base:latest --private
+docker build -t dev-triage-env .
+docker run -p 7860:7860 dev-triage-env
 ```
 
-After deployment, your space will be available at:
-`https://huggingface.co/spaces/<repo-id>`
+### Deploying to HuggingFace Spaces
+1. Create a newly hosted Space on Hugging Face.
+2. Select **Docker** as the Space SDK.
+3. Choose the "Blank" Docker template (it defaults to port 7860).
+4. Commit all files in this directory to the Space repository.
+5. Hugging Face Spaces will automatically find the root `Dockerfile` and deploy the application.
 
-The deployed space includes:
-- **Web Interface** at `/web` - Interactive UI for exploring the environment
-- **API Documentation** at `/docs` - Full OpenAPI/Swagger interface
-- **Health Check** at `/health` - Container health monitoring
-- **WebSocket** at `/ws` - Persistent session endpoint for low-latency interactions
-
-## Environment Details
-
-### Action
-**GitprtriageAction**: Contains a single field
-- `message` (str) - The message to echo back
-
-### Observation
-**GitprtriageObservation**: Contains the echo response and metadata
-- `echoed_message` (str) - The message echoed back
-- `message_length` (int) - Length of the message
-- `reward` (float) - Reward based on message length (length × 0.1)
-- `done` (bool) - Always False for echo environment
-- `metadata` (dict) - Additional info like step count
-
-### Reward
-The reward is calculated as: `message_length × 0.1`
-- "Hi" → reward: 0.2
-- "Hello, World!" → reward: 1.3
-- Empty message → reward: 0.0
-
-## Advanced Usage
-
-### Connecting to an Existing Server
-
-If you already have a Gitprtriage Env environment server running, you can connect directly:
-
-```python
-from gitprtriage_env import GitprtriageEnv
-
-# Connect to existing server
-gitprtriage_envenv = GitprtriageEnv(base_url="<ENV_HTTP_URL_HERE>")
-
-# Use as normal
-result = gitprtriage_envenv.reset()
-result = gitprtriage_envenv.step(GitprtriageAction(message="Hello!"))
-```
-
-Note: When connecting to an existing server, `gitprtriage_envenv.close()` will NOT stop the server.
-
-### Using the Context Manager
-
-The client supports context manager usage for automatic connection management:
-
-```python
-from gitprtriage_env import GitprtriageAction, GitprtriageEnv
-
-# Connect with context manager (auto-connects and closes)
-with GitprtriageEnv(base_url="http://localhost:8000") as env:
-    result = env.reset()
-    print(f"Reset: {result.observation.echoed_message}")
-    # Multiple steps with low latency
-    for msg in ["Hello", "World", "!"]:
-        result = env.step(GitprtriageAction(message=msg))
-        print(f"Echoed: {result.observation.echoed_message}")
-```
-
-The client uses WebSocket connections for:
-- **Lower latency**: No HTTP connection overhead per request
-- **Persistent session**: Server maintains your environment state
-- **Efficient for episodes**: Better for many sequential steps
-
-### Concurrent WebSocket Sessions
-
-The server supports multiple concurrent WebSocket connections. To enable this,
-modify `server/app.py` to use factory mode:
-
-```python
-# In server/app.py - use factory mode for concurrent sessions
-app = create_app(
-    GitprtriageEnvironment,  # Pass class, not instance
-    GitprtriageAction,
-    GitprtriageObservation,
-    max_concurrent_envs=4,  # Allow 4 concurrent sessions
-)
-```
-
-Then multiple clients can connect simultaneously:
-
-```python
-from gitprtriage_env import GitprtriageAction, GitprtriageEnv
-from concurrent.futures import ThreadPoolExecutor
-
-def run_episode(client_id: int):
-    with GitprtriageEnv(base_url="http://localhost:8000") as env:
-        result = env.reset()
-        for i in range(10):
-            result = env.step(GitprtriageAction(message=f"Client {client_id}, step {i}"))
-        return client_id, result.observation.message_length
-
-# Run 4 episodes concurrently
-with ThreadPoolExecutor(max_workers=4) as executor:
-    results = list(executor.map(run_episode, range(4)))
-```
-
-## Development & Testing
-
-### Direct Environment Testing
-
-Test the environment logic directly without starting the HTTP server:
-
+### Baseline Inference
+We include a baseline reasoning script that parses the `localhost:7860` server via REST calls and performs inference.
 ```bash
-# From the server directory
-python3 server/gitprtriage_env_environment.py
+python inference.py
 ```
 
-This verifies that:
-- Environment resets correctly
-- Step executes actions properly
-- State tracking works
-- Rewards are calculated correctly
+## Task Difficulties & Graders
 
-### Running Locally
+1. **Easy (Issue Classification):** Classify issue as bug, feature, or duplicate. Score 0 or 1.
+2. **Medium (Bug Line Identification):** Classify + find exact bug line. Partial credit for proximity.
+3. **Hard (Full Triage + Fix Suggestion):** Classify + bug line + team routing + keyword-checked fix.
 
-Run the server locally for development:
+Action and observation spaces use typed Pydantic models (see `models.py`). Every task features a non-gameable deterministic grader bounded strictly between [0.0, 1.0].
 
-```bash
-uvicorn server.app:app --reload
-```
-
-## Project Structure
-
-```
-gitprtriage_env/
-├── .dockerignore         # Docker build exclusions
-├── __init__.py            # Module exports
-├── README.md              # This file
-├── openenv.yaml           # OpenEnv manifest
-├── pyproject.toml         # Project metadata and dependencies
-├── uv.lock                # Locked dependencies (generated)
-├── client.py              # GitprtriageEnv client
-├── models.py              # Action and Observation models
-└── server/
-    ├── __init__.py        # Server module exports
-    ├── gitprtriage_env_environment.py  # Core environment logic
-    ├── app.py             # FastAPI application (HTTP + WebSocket endpoints)
-    └── Dockerfile         # Container image definition
-```
+### Baseline Scores (CoT Improved)
+| Difficulty | Average Score |
+|------------|---------------|
+| Easy       | 1.000 ± 0.000 |
+| Medium     | 0.800 ± 0.000 |
+| Hard       | 0.800 ± 0.000 |

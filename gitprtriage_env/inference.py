@@ -1,254 +1,128 @@
 """
-Inference Script Example
-===================================
-MANDATORY
-- Before submitting, ensure the following variables are defined in your environment configuration:
-    API_BASE_URL   The API endpoint for the LLM.
-    MODEL_NAME     The model identifier to use for inference.
-    HF_TOKEN       Your Hugging Face / API key.
-    
-- The inference script must be named `inference.py` and placed in the root directory of the project
-- Participants must use OpenAI Client for all LLM calls using above variables
+inference.py — Baseline LLM Agent for DevTriageEnv
+Required env vars:
+  API_BASE_URL  - LLM endpoint
+  MODEL_NAME    - Model name  
+  HF_TOKEN      - API key (works for both HF and Groq)
+  ENV_URL       - Environment URL
 """
-
-import os
-import re
-import base64
-import textwrap
-from io import BytesIO
-from typing import List, Optional, Dict
-
+import os, json, re, statistics, requests
 from openai import OpenAI
-import numpy as np
-from PIL import Image
+from dotenv import load_dotenv
 
-from browsergym_env import BrowserGymAction, BrowserGymEnv
+load_dotenv()
 
-API_BASE_URL = os.getenv("API_BASE_URL") // "https://router.huggingface.co/v1"
-API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
-MODEL_NAME = os.getenv("MODEL_NAME")
-MAX_STEPS = 8
-MAX_DOM_CHARS = 3500
-TEMPERATURE = 0.2
-MAX_TOKENS = 200
-FALLBACK_ACTION = "noop()"
+API_BASE_URL = os.getenv("API_BASE_URL", "https://api.groq.com/openai/v1")
+MODEL_NAME   = os.getenv("MODEL_NAME",   "llama-3.1-8b-instant")
+HF_TOKEN     = os.getenv("HF_TOKEN")      # reused for Groq key too
+if not HF_TOKEN:
+    raise ValueError("HF_TOKEN environment variable not set")
+ENV_URL      = os.getenv("ENV_URL",      "http://localhost:7860")
 
-DEBUG = True
-ACTION_PREFIX_RE = re.compile(
-    r"^(action|next action)\s*[:\-]\s*",
-    re.IGNORECASE,
+client = OpenAI(
+    base_url=API_BASE_URL, 
+    api_key=HF_TOKEN,
+    max_retries=3,          # Practical Fix: Limited 3 retries for rate limits
+    timeout=30.0            # Practical Fix: 30s timeout for cold starts
 )
-ACTION_PATTERN = re.compile(r"[A-Za-z_]+\s*\(.*\)", re.DOTALL)
 
+SYSTEM_PROMPT = """You are a senior software engineer triaging GitHub issues.
+Respond with ONLY valid, strict JSON matching this schema:
+{
+  "type": "object",
+  "properties": {
+    "thought_process": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Step-by-step reasoning. 1. Analyze the issue. 2. Identify the category. 3. Look for the exact line number of the bug in the code snippet. 4. Determine the internal team. 5. Draft the fix. ALWAYS DO THIS FIRST."
+    },
+    "classification": {
+      "type": "string",
+      "enum": ["bug", "feature", "duplicate"],
+      "description": "Required. The category of the issue."
+    },
+    "bug_line": {
+      "type": ["integer", "null"],
+      "description": "The 1-indexed line number where the bug is located. Set to null if there is no code snippet or no obvious bug."
+    },
+    "team": {
+      "type": ["string", "null"],
+      "enum": ["webdev", "devops", "aiml", null],
+      "description": "The team best suited to handle this. webdev=frontend/backend/api, devops=infra/ci/docker/k8s, aiml=ml/models. Set to null if unable to determine."
+    },
+    "suggested_fix": {
+      "type": ["string", "null"],
+      "description": "One concrete sentence suggesting HOW to fix the bug. Do not just say 'fix the bug'. Set to null if no clear fix."
+    }
+  },
+  "required": ["thought_process", "classification", "bug_line", "team", "suggested_fix"]
+}
+No markdown formatting, no backticks, no markdown JSON blocks. Output exactly the raw JSON text. Make sure bug_line is exactly an integer or null."""
 
-SYSTEM_PROMPT = textwrap.dedent(
-    """
-    You control a web browser through BrowserGym.
-    Reply with exactly one action string.
-    The action must be a valid BrowserGym command such as:
-    - noop()
-    - click('<BID>')
-    - type('selector', 'text to enter')
-    - fill('selector', 'text to enter')
-    - send_keys('Enter')
-    - scroll('down')
-    Use single quotes around string arguments.
-    When clicking, use the BrowserGym element IDs (BIDs) listed in the user message.
-    If you are unsure, respond with noop().
-    Do not include explanations or additional text.
-    """
-).strip()
-
-
-def build_history_lines(history: List[str]) -> str:
-    if not history:
-        return "None"
-    return "\n".join(history[-4:])
-
-
-def extract_screenshot_uri(observation) -> Optional[str]:
-    if observation.screenshot is None:
-        return None
-    screen_array = np.array(observation.screenshot, dtype=np.uint8)
-    image = Image.fromarray(screen_array)
-    buffer = BytesIO()
-    image.save(buffer, format="PNG")
-    buffer.seek(0)
-    data_uri = base64.b64encode(buffer.read()).decode("utf-8")
-    return f"data:image/png;base64,{data_uri}"
-
-
-def extract_clickable_elements(observation) -> List[Dict[str, str]]:
-    """Collect BrowserGym element IDs that can be clicked."""
-
-    metadata = getattr(observation, "metadata", {}) or {}
-    obs_dict = metadata.get("browsergym_obs", {}) or {}
-    extra_props = obs_dict.get("extra_element_properties", {}) or {}
-
-    clickables: List[Dict[str, str]] = []
-    for bid, props in extra_props.items():
-        if not props.get("clickable"):
-            continue
-
-        bbox = props.get("bbox") or []
-        bbox_str = ", ".join(bbox) if bbox else "?"
-        clickables.append(
-            {
-                "bid": str(bid),
-                "bbox": bbox_str,
-            }
-        )
-
-    # Keep a stable ordering for readability
-    clickables.sort(key=lambda item: item["bid"])
-    return clickables
-
-
-def build_user_prompt(step: int, observation, history: List[str]) -> str:
-    goal = observation.goal or "(not provided)"
-    url = observation.url or "(unknown)"
-    error_note = "Yes" if observation.last_action_error else "No"
-
-    clickables = extract_clickable_elements(observation)
-    if clickables:
-        actions_hint = "\n".join(
-            f"    - {item['bid']} (bbox: {item['bbox']})" for item in clickables
-        )
-    else:
-        actions_hint = "    (none detected)"
-
-    prompt = textwrap.dedent(
-        f"""
-        Step: {step}
-        Goal: {goal}
-        Current URL: {url}
-        Previous steps:
-        {build_history_lines(history)}
-        Last action error: {error_note}
-        Available clickable element IDs: {actions_hint}
-        Reply with exactly one BrowserGym action string.
-        """
-    ).strip()
-    return prompt
-
-
-def parse_model_action(response_text: str) -> str:
-    if not response_text:
-        return FALLBACK_ACTION
-
-    # Prefer the first line that looks like an action string
-    lines = response_text.splitlines()
-    for raw_line in lines:
-        line = raw_line.strip()
-        if not line:
-            continue
-        line = ACTION_PREFIX_RE.sub("", line)
-        match = ACTION_PATTERN.search(line)
-        if match:
-            action = match.group(0).strip()
-            # Collapse internal whitespace
-            action = re.sub(r"\s+", " ", action)
-            # If the model tried to click by natural-language description while we
-            # only exposed numeric BrowserGym IDs, fallback to the single detected ID.
-            return action
-
-    # Fall back to searching the whole response
-    match = ACTION_PATTERN.search(response_text)
+def parse_action(raw: str) -> dict:
+    text = re.sub(r"```json\s*", "", raw)
+    text = re.sub(r"```\s*", "", text).strip()
+    match = re.search(r"\{.*\}", text, re.DOTALL)
     if match:
-        action = match.group(0).strip()
-        action = re.sub(r"\s+", " ", action)
-        return action
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
+    return {"classification": "bug", "bug_line": None,
+            "team": None, "suggested_fix": None, "thought_process": []}
 
-    return FALLBACK_ACTION
 
+def run_episode() -> tuple:
+    obs = requests.post(f"{ENV_URL}/reset", timeout=10).json()
+    task_level = obs.get("task_level", "easy")
 
-def main() -> None:
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    parts = [f"Title: {obs['title']}", f"Body: {obs['body']}"]
+    if obs.get("code_snippet"):
+        parts.append(f"\nCode (lines are 1-indexed):\n{obs['code_snippet']}")
+    if obs.get("existing_labels"):
+        parts.append(f"Labels: {', '.join(obs['existing_labels'])}")
+    parts.append(f"\nTask Level: {task_level}\nRespond with ONLY JSON.")
+    prompt = "\n".join(parts)
 
-    env = BrowserGymEnv.from_docker_image(
-        image="browsergym-env:latest",
-        env_vars={
-            "BROWSERGYM_BENCHMARK": "miniwob",
-            "BROWSERGYM_TASK_NAME": "click-test",
-        },
+    response = client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user",   "content": prompt},
+        ],
+        max_tokens=600,
+        temperature=0.1,
     )
+    action = parse_action(response.choices[0].message.content)
+    result = requests.post(f"{ENV_URL}/step", json=action, timeout=10).json()
+    return result.get("reward", 0.0), task_level
 
-    history: List[str] = []
 
-    try:
-        result = env.reset()
-        observation = result.observation
-        print(f"Episode goal: {observation.goal}")
+def main():
+    print(f"Running inference against: {ENV_URL}")
+    print(f"Model: {MODEL_NAME}")
+    print("-" * 50)
 
-        for step in range(1, MAX_STEPS + 1):
-            if result.done:
-                print("Environment signalled done. Stopping early.")
-                break
+    task_scores = {"easy": [], "medium": [], "hard": []}
+    for ep in range(60):
+        try:
+            score, level = run_episode()
+            task_scores[level].append(score)
+            print(f"  Ep {ep+1:02d} [{level:6s}] score={score:.3f}")
+        except Exception as e:
+            print(f"  Ep {ep+1:02d} ERROR: {e}")
 
-            user_prompt = build_user_prompt(step, observation, history)
-            user_content = [{"type": "text", "text": user_prompt}]
-            screenshot_uri = extract_screenshot_uri(observation)
-            if screenshot_uri:
-                user_content.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": screenshot_uri},
-                    }
-                )
-
-            messages = [
-                {
-                    "role": "system",
-                    "content": [{"type": "text", "text": SYSTEM_PROMPT}],
-                },
-                {
-                    "role": "user",
-                    "content": user_content,
-                },
-            ]
-
-            try:
-                completion = client.chat.completions.create(
-                    model=MODEL_NAME,
-                    messages=messages,
-                    temperature=TEMPERATURE,
-                    max_tokens=MAX_TOKENS,
-                    stream=False,
-                )
-                response_text = completion.choices[0].message.content or ""
-            # pylint: disable=broad-except
-            except Exception as exc:  # noqa: BLE001
-                failure_msg = f"Model request failed ({exc}). Using fallback action."
-                print(failure_msg)
-                response_text = FALLBACK_ACTION
-
-            action_str = parse_model_action(response_text)
-            print(f"Step {step}: model suggested -> {action_str}")
-
-            result = env.step(BrowserGymAction(action_str=action_str))
-            observation = result.observation
-
-            reward = result.reward or 0.0
-            error_flag = " ERROR" if observation.last_action_error else ""
-            history_line = (
-                f"Step {step}: {action_str} -> reward {reward:+.2f}{error_flag}"
-            )
-            history.append(history_line)
-            print(
-                "  Reward: "
-                f"{reward:+.2f} | Done: {result.done} | Last action error: "
-                f"{observation.last_action_error}"
-            )
-
-            if result.done:
-                print("Episode complete.")
-                break
-
+    print("\n" + "-" * 50)
+    print("BASELINE RESULTS")
+    print("-" * 50)
+    for level in ["easy", "medium", "hard"]:
+        scores = task_scores[level]
+        if scores:
+            avg = statistics.mean(scores)
+            std = statistics.stdev(scores) if len(scores) > 1 else 0.0
+            print(f"  {level:6s}: {avg:.3f} ± {std:.3f}  (n={len(scores)})")
         else:
-            print(f"Reached max steps ({MAX_STEPS}).")
-
-    finally:
-        env.close()
+            print(f"  {level:6s}: no data")
 
 
 if __name__ == "__main__":

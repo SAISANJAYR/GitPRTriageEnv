@@ -1,99 +1,31 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+import requests
+from typing import Dict, Any
 
-"""Gitprtriage Env Environment Client."""
+class DevTriageClient:
+    def __init__(self, base_url: str = "http://localhost:7860"):
+        self.base_url = base_url
 
-from typing import Dict
+    def reset(self) -> Dict[str, Any]:
+        response = requests.post(f"{self.base_url}/reset")
+        response.raise_for_status()
+        return response.json()
 
-from openenv.core import EnvClient
-from openenv.core.client_types import StepResult
-from openenv.core.env_server.types import State
+    def step(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        response = requests.post(f"{self.base_url}/step", json=action)
+        response.raise_for_status()
+        return response.json()
 
-from .models import GitprtriageAction, GitprtriageObservation
+    def get_state(self) -> Dict[str, Any]:
+        response = requests.get(f"{self.base_url}/state")
+        response.raise_for_status()
+        return response.json()
 
+    def get_tasks(self) -> list:
+        response = requests.get(f"{self.base_url}/tasks")
+        response.raise_for_status()
+        return response.json()
 
-class GitprtriageEnv(
-    EnvClient[GitprtriageAction, GitprtriageObservation, State]
-):
-    """
-    Client for the Gitprtriage Env Environment.
-
-    This client maintains a persistent WebSocket connection to the environment server,
-    enabling efficient multi-step interactions with lower latency.
-    Each client instance has its own dedicated environment session on the server.
-
-    Example:
-        >>> # Connect to a running server
-        >>> with GitprtriageEnv(base_url="http://localhost:8000") as client:
-        ...     result = client.reset()
-        ...     print(result.observation.echoed_message)
-        ...
-        ...     result = client.step(GitprtriageAction(message="Hello!"))
-        ...     print(result.observation.echoed_message)
-
-    Example with Docker:
-        >>> # Automatically start container and connect
-        >>> client = GitprtriageEnv.from_docker_image("gitprtriage_env-env:latest")
-        >>> try:
-        ...     result = client.reset()
-        ...     result = client.step(GitprtriageAction(message="Test"))
-        ... finally:
-        ...     client.close()
-    """
-
-    def _step_payload(self, action: GitprtriageAction) -> Dict:
-        """
-        Convert GitprtriageAction to JSON payload for step message.
-
-        Args:
-            action: GitprtriageAction instance
-
-        Returns:
-            Dictionary representation suitable for JSON encoding
-        """
-        return {
-            "message": action.message,
-        }
-
-    def _parse_result(self, payload: Dict) -> StepResult[GitprtriageObservation]:
-        """
-        Parse server response into StepResult[GitprtriageObservation].
-
-        Args:
-            payload: JSON response data from server
-
-        Returns:
-            StepResult with GitprtriageObservation
-        """
-        obs_data = payload.get("observation", {})
-        observation = GitprtriageObservation(
-            echoed_message=obs_data.get("echoed_message", ""),
-            message_length=obs_data.get("message_length", 0),
-            done=payload.get("done", False),
-            reward=payload.get("reward"),
-            metadata=obs_data.get("metadata", {}),
-        )
-
-        return StepResult(
-            observation=observation,
-            reward=payload.get("reward"),
-            done=payload.get("done", False),
-        )
-
-    def _parse_state(self, payload: Dict) -> State:
-        """
-        Parse server response into State object.
-
-        Args:
-            payload: JSON response from state request
-
-        Returns:
-            State object with episode_id and step_count
-        """
-        return State(
-            episode_id=payload.get("episode_id"),
-            step_count=payload.get("step_count", 0),
-        )
+    def health(self) -> Dict[str, Any]:
+        response = requests.get(f"{self.base_url}/health")
+        response.raise_for_status()
+        return response.json()

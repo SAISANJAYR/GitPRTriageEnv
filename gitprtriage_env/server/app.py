@@ -1,84 +1,55 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from server.environment import DevTriageEnvironment
+from models import TriageAction
 
-"""
-FastAPI application for the Gitprtriage Env Environment.
+app = FastAPI(title="DevTriageEnv")
 
-This module creates an HTTP server that exposes the GitprtriageEnvironment
-over HTTP and WebSocket endpoints, compatible with EnvClient.
-
-Endpoints:
-    - POST /reset: Reset the environment
-    - POST /step: Execute an action
-    - GET /state: Get current environment state
-    - GET /schema: Get action/observation schemas
-    - WS /ws: WebSocket endpoint for persistent sessions
-
-Usage:
-    # Development (with auto-reload):
-    uvicorn server.app:app --reload --host 0.0.0.0 --port 8000
-
-    # Production:
-    uvicorn server.app:app --host 0.0.0.0 --port 8000 --workers 4
-
-    # Or run directly:
-    python -m server.app
-"""
-
-try:
-    from openenv.core.env_server.http_server import create_app
-except Exception as e:  # pragma: no cover
-    raise ImportError(
-        "openenv is required for the web interface. Install dependencies with '\n    uv sync\n'"
-    ) from e
-
-try:
-    from ..models import GitprtriageAction, GitprtriageObservation
-    from .gitprtriage_env_environment import GitprtriageEnvironment
-except ModuleNotFoundError:
-    from models import GitprtriageAction, GitprtriageObservation
-    from server.gitprtriage_env_environment import GitprtriageEnvironment
-
-
-# Create the app with web interface and README integration
-app = create_app(
-    GitprtriageEnvironment,
-    GitprtriageAction,
-    GitprtriageObservation,
-    env_name="gitprtriage_env",
-    max_concurrent_envs=1,  # increase this number to allow more concurrent WebSocket sessions
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
+env = DevTriageEnvironment()
 
-def main(host: str = "0.0.0.0", port: int = 8000):
-    """
-    Entry point for direct execution via uv run or python -m.
+@app.get("/health")
+def health():
+    return {"status": "healthy", "issues_loaded": len(env.all_issues)}
 
-    This function enables running the server without Docker:
-        uv run --project . server
-        uv run --project . server --port 8001
-        python -m gitprtriage_env.server.app
+@app.post("/reset")
+def reset():
+    return env.reset().model_dump()
 
-    Args:
-        host: Host address to bind to (default: "0.0.0.0")
-        port: Port number to listen on (default: 8000)
+@app.post("/step")
+def step(action: TriageAction):
+    return env.step(action).model_dump()
 
-    For production deployments, consider using uvicorn directly with
-    multiple workers:
-        uvicorn gitprtriage_env.server.app:app --workers 4
-    """
-    import uvicorn
+@app.get("/state")
+def state():
+    return env.state.model_dump()
 
-    uvicorn.run(app, host=host, port=port)
-
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=8000)
-    args = parser.parse_args()
-    main(port=args.port)
+@app.get("/tasks")
+def tasks():
+    return [
+        {
+            "id": "task_easy",
+            "name": "Issue Classification",
+            "difficulty": "easy",
+            "description": "Classify issue as bug, feature, or duplicate. Score 0 or 1."
+        },
+        {
+            "id": "task_medium",
+            "name": "Bug Line Identification",
+            "difficulty": "medium",
+            "description": "Classify + find exact bug line. Partial credit for proximity."
+        },
+        {
+            "id": "task_hard",
+            "name": "Full Triage + Fix Suggestion",
+            "difficulty": "hard",
+            "description": "Classify + bug line + team routing + keyword-checked fix."
+        }
+    ]
