@@ -11,11 +11,15 @@ tags:
   - code-review
 ---
 
-# DevTriageEnv
+# GitPRTriage Env
 
-A GitHub issue triage environment where an LLM agent classifies issues, identifies bug lines in code, routes to the correct engineering team, and suggests fixes.
+A GitHub issue triage and routing environment powered by RL agents. Built for the **Meta × Scaler OpenEnv Hackathon 2026**.
 
-Built for the **Meta × Scaler OpenEnv Hackathon 2026**.
+## Problem Statement
+
+Enterprise engineering teams spend thousands of collective hours annually reading through unstructured GitHub issues, identifying whether they are genuine bugs or duplicate feature requests, isolating the faulty lines of code across massive repositories, and determining which specialized internal team (e.g., DevOps, WebDev, AIML) should urgently handle them. 
+
+**GitPRTriage Env** transforms this grueling, high-friction manual workflow into a rigorous, interactive OpenEnv reinforcement learning benchmark. By providing agents with raw markdown descriptions and broken code snippets extracted directly from realistic development pipelines, the environment natively tests an LLM's capacity to orchestrate complex developer operations autonomously. It explicitly fills a crucial gap in modern agentic capability evaluations by shifting away from standard toy box games and firmly into professional, multi-layered software development workflows.
 
 ## Environment Description
 
