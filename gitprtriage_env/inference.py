@@ -75,6 +75,7 @@ def parse_action(raw: str) -> dict:
 def run_episode() -> tuple:
     obs = requests.post(f"{ENV_URL}/reset", timeout=10).json()
     task_level = obs.get("task_level", "easy")
+    print(f"[START] task={task_level}", flush=True)
 
     parts = [f"Title: {obs['title']}", f"Body: {obs['body']}"]
     if obs.get("code_snippet"):
@@ -102,7 +103,11 @@ def run_episode() -> tuple:
     action = parse_action(content)
     action.pop("thought_process", None)  # Clean internal reasoning payload before sending to strict API
     result = requests.post(f"{ENV_URL}/step", json=action, timeout=10).json()
-    return result.get("reward", 0.0), task_level
+    score = result.get("reward", 0.0)
+    
+    print(f"[STEP] step=1 reward={score}", flush=True)
+    print(f"[END] task={task_level} score={score} steps=1", flush=True)
+    return score, task_level
 
 
 def main():
