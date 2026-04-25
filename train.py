@@ -25,21 +25,9 @@ from trl import GRPOConfig, GRPOTrainer
 # Client & Inference Inlined from prevaluation_env
 # ---------------------------------------------------------------------------
 
-class DevTriageClient:
-    def __init__(self, base_url: str = None):
-        if base_url is None:
-            base_url = os.environ.get("ENV_URL", "http://localhost:7860")
-        self.base_url = base_url
-
-    def reset(self) -> dict:
-        response = requests.post(f"{self.base_url}/reset")
-        response.raise_for_status()
-        return response.json()
-
-    def step(self, action: dict) -> dict:
-        response = requests.post(f"{self.base_url}/step", json=action)
-        response.raise_for_status()
-        return response.json()
+url = 'https://huggingface.co/spaces/rsd-06/PRRegressionAuditEnv/resolve/main/prevaluation_env/data/prs.json'
+resp = requests.get(url)
+PR_TRUTH = {pr["id"]: pr for pr in resp.json()}
 
 def parse_action(raw: str) -> dict:
     text = re.sub(r"```json\s*", "", raw)
@@ -68,28 +56,68 @@ def compute_env_reward(completions: list[str], pr_ids: list[str], **kwargs) -> l
     rewards = []
     for comp, pr_id in zip(completions, pr_ids):
         try:
-            action_dict = parse_action(comp)
-            if not action_dict:
-                rewards.append(0.001)
-                continue
-                
-            client = DevTriageClient()
-            matched = False
-            for _ in range(20):
-                obs = client.reset()
-                obs_id = obs.get("pr_id") or obs.get("issue_id")
-                if obs_id == pr_id:
-                    matched = True
-                    break
-            
-            if not matched:
+            action = parse_action(comp)
+            truth = PR_TRUTH.get(pr_id)
+            if not truth:
                 rewards.append(0.001)
                 continue
             
-            result = client.step(action_dict)
-            reward_val = float(result.get("reward", 0.001))
-            rewards.append(reward_val)
-        except Exception as e:
+            level = truth.get("task_level", "easy")
+            score = 0.0
+            
+            decision = action.get("review_decision", "")
+            true_decision = truth.get("true_decision", "approve")
+            
+            if level == "easy":
+                if decision == true_decision:
+                    score += 0.55
+                blocker = (action.get("blocker_type") or "").lower()
+                true_blocker = truth.get("true_blocker_type")
+                if true_blocker is None and not blocker:
+                    score += 0.45
+                elif true_blocker and blocker == true_blocker.lower():
+                    score += 0.45
+                    
+            elif level == "medium":
+                if decision == "request_changes":
+                    score += 0.10
+                cat = (action.get("defect_category") or "").lower()
+                if cat == (truth.get("true_defect_category") or "").lower():
+                    score += 0.40
+                fl = action.get("faulty_line")
+                tfl = truth.get("true_faulty_line")
+                if fl and tfl:
+                    try:
+                        if int(fl) == tfl: score += 0.35
+                        elif abs(int(fl) - tfl) == 1: score += 0.15
+                    except: pass
+                    
+            elif level == "hard":
+                if decision == "request_changes":
+                    score += 0.05
+                cat = (action.get("defect_category") or "").lower()
+                if cat == (truth.get("true_defect_category") or "").lower():
+                    score += 0.20
+                fl = action.get("faulty_line")
+                tfl = truth.get("true_faulty_line")
+                if fl and tfl:
+                    try:
+                        if int(fl) == tfl: score += 0.25
+                        elif abs(int(fl) - tfl) == 1: score += 0.10
+                    except: pass
+                team = (action.get("reviewer_team") or "").lower()
+                if team == (truth.get("true_reviewer_team") or "").lower():
+                    score += 0.25
+                suggestion = (action.get("suggested_change") or "").lower()
+                keywords = [k.lower() for k in truth.get("true_fix_keywords", [])]
+                if suggestion and keywords:
+                    matched = sum(1 for k in keywords if k in suggestion)
+                    if matched >= 2: score += 0.25
+                    elif matched == 1: score += 0.15
+                    else: score += 0.05
+                    
+            rewards.append(min(max(score, 0.001), 0.999))
+        except Exception:
             rewards.append(0.001)
     return rewards
 
