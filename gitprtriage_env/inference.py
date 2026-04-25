@@ -36,7 +36,7 @@ API_BASE_URL = os.getenv("API_BASE_URL", "https://api.groq.com/openai/v1")
 MODEL_NAME   = os.getenv("MODEL_NAME",   "llama-3.1-8b-instant")
 HF_TOKEN     = os.getenv("HF_TOKEN")
 if not HF_TOKEN:
-    raise ValueError("HF_TOKEN environment variable not set")
+    print("Warning: HF_TOKEN environment variable not set. LLM calls will fail.")
 ENV_URL      = os.getenv("ENV_URL", "http://localhost:7860")
 
 client = OpenAI(
@@ -134,7 +134,7 @@ def _call_single_agent(obs: dict) -> dict:
                 {"role": "user",   "content": prompt},
             ],
             max_tokens=600,
-            temperature=0.1,
+            temperature=0.0,
         )
         content = response.choices[0].message.content
     except Exception as exc:

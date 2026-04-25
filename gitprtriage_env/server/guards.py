@@ -301,7 +301,7 @@ class TimingGuard:
 
     name: str = "TimingGuard"
 
-    def __init__(self, min_ms: float = 200.0) -> None:
+    def __init__(self, min_ms: float = 10.0) -> None:
         self._min_ms: float = min_ms
         self._fast_response_count: int = 0
         self._total_checked: int = 0

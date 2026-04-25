@@ -250,7 +250,7 @@ class DefectLocatorAgent(BaseAgent):
             text = code + " " + context
 
             security_signals = ["inject", "exec(", "eval(", "f\"select", "secure=false", "algorithm", "authorization"]
-            performance_signals = ["pipeline(", "load_model", "/ 255", "loss +=", "fits_transform", "for i in"]
+            performance_signals = ["pipeline(", "load_model", "/ 255", "loss +=", "fits_transform"]
 
             if any(s in text for s in security_signals):
                 category = "security"
