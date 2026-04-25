@@ -6,11 +6,13 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
 # Install deps first (layer caching — faster rebuilds)
-COPY requirements.txt .
+COPY prevaluation_env/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy everything else
 COPY . .
+
+WORKDIR /app/prevaluation_env
 
 # HF Spaces uses port 7860
 EXPOSE 7860
