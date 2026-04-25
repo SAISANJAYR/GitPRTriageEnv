@@ -1,12 +1,19 @@
 """
 agents/orchestrator.py
 ----------------------
-Multi-agent orchestrator for the GitPRTriageEnv triage system.
+Multi-agent orchestrator for the PRRegressionAuditEnv review system.
 
-The MultiAgentOrchestrator coordinates all four specialist agents in a
-fixed pipeline: classify → (locate bug + route team in parallel) →
-suggest fix. Each step enriches the shared observation dict so that
-downstream agents have context from upstream decisions.
+The MultiAgentOrchestrator coordinates four specialist agents in a fixed
+dependency pipeline:
+
+    SafetyGateAgent    (step 1) → review_decision, blocker_type
+    DefectLocatorAgent (step 2) → defect_category, faulty_line
+    ReviewerRouterAgent(step 3) → reviewer_team     [Hard only]
+    ReviewCommentAgent (step 4) → suggested_change  [Hard only]
+
+Each step enriches the shared observation so downstream agents receive
+upstream results as context. The final assembled dict maps 1:1 to
+ReviewAction fields.
 """
 
 from __future__ import annotations
@@ -16,32 +23,32 @@ from typing import Any, Optional
 
 from agents.base import AgentResult, BaseAgent
 from agents.specialists import (
-    BugLocatorAgent,
-    ClassifierAgent,
-    FixSuggesterAgent,
-    TeamRouterAgent,
+    DefectLocatorAgent,
+    ReviewCommentAgent,
+    ReviewerRouterAgent,
+    SafetyGateAgent,
 )
 
 
 class MultiAgentOrchestrator:
-    """Coordinates all four specialist agents to produce a complete triage action.
+    """Coordinates all four specialist agents to produce a complete ReviewAction.
 
-    The pipeline runs in dependency order:
+    Pipeline dependency order:
+        1. SafetyGateAgent     — review_decision + blocker_type
+        2. DefectLocatorAgent  — defect_category + faulty_line (uses decision context)
+        3. ReviewerRouterAgent — reviewer_team (uses defect context)
+        4. ReviewCommentAgent  — suggested_change (uses faulty_line + team context)
 
-    1. ``ClassifierAgent``   — determines bug / feature / duplicate
-    2. ``BugLocatorAgent``   — identifies the exact bug line (uses classification)
-    2. ``TeamRouterAgent``   — selects the responsible team (uses classification)
-    3. ``FixSuggesterAgent`` — proposes a concrete fix (uses line + team)
-
-    All agent results are stored in ``agent_trace`` for post-hoc analysis.
+    All agent results are stored in ``agent_trace`` for post-hoc analysis
+    and reward attribution.
 
     Attributes:
-        classifier:    The ClassifierAgent instance.
-        bug_locator:   The BugLocatorAgent instance.
-        team_router:   The TeamRouterAgent instance.
-        fix_suggester: The FixSuggesterAgent instance.
-        agent_trace:   Ordered list of AgentResult objects from the current episode.
-        episode_count: Total number of episodes run since instantiation.
+        safety_gate:    The SafetyGateAgent instance.
+        defect_locator: The DefectLocatorAgent instance.
+        router:         The ReviewerRouterAgent instance.
+        comment_agent:  The ReviewCommentAgent instance.
+        agent_trace:    Ordered list of AgentResult objects from the current episode.
+        episode_count:  Total number of episodes run since instantiation.
     """
 
     def __init__(
@@ -53,16 +60,14 @@ class MultiAgentOrchestrator:
         """Instantiate the orchestrator and all four specialist agents.
 
         Args:
-            client:      An OpenAI-compatible client exposing
-                         ``client.chat.completions.create``.
-            model_name:  Model identifier string forwarded to every agent.
-            temperature: Sampling temperature forwarded to every agent.
-                         Pass 0.0 (the default) for fully deterministic runs.
+            client:      An OpenAI-compatible client with chat.completions.create.
+            model_name:  Model identifier forwarded to every agent.
+            temperature: Sampling temperature (default 0.0 for determinism).
         """
-        self.classifier = ClassifierAgent(client, model_name, temperature)
-        self.bug_locator = BugLocatorAgent(client, model_name, temperature)
-        self.team_router = TeamRouterAgent(client, model_name, temperature)
-        self.fix_suggester = FixSuggesterAgent(client, model_name, temperature)
+        self.safety_gate = SafetyGateAgent(client, model_name, temperature)
+        self.defect_locator = DefectLocatorAgent(client, model_name, temperature)
+        self.router = ReviewerRouterAgent(client, model_name, temperature)
+        self.comment_agent = ReviewCommentAgent(client, model_name, temperature)
 
         self.agent_trace: list[AgentResult] = []
         self.episode_count: int = 0
@@ -72,72 +77,88 @@ class MultiAgentOrchestrator:
     # ------------------------------------------------------------------
 
     def run(self, observation: dict) -> dict:
-        """Execute the full four-agent triage pipeline on one observation.
+        """Execute the full four-agent review pipeline on one observation.
 
         Steps:
-            A. Reset the per-episode trace and increment the episode counter.
-            B. Run ClassifierAgent.
-            C. Enrich the observation with the classification result.
-            D. Run BugLocatorAgent and TeamRouterAgent (both use classification context).
-            E. Enrich the observation with bug line and team results.
-            F. Run FixSuggesterAgent (uses line + team context).
-            G. Assemble and return the final action dict.
+            A. Reset the per-episode trace and increment episode counter.
+            B. Run SafetyGateAgent → review_decision + blocker_type.
+            C. Enrich observation with decision context.
+            D. Run DefectLocatorAgent → defect_category + faulty_line.
+            E. Enrich observation with defect context.
+            F. Run ReviewerRouterAgent → reviewer_team.
+            G. Run ReviewCommentAgent → suggested_change.
+            H. Assemble and return the final ReviewAction dict.
 
         Args:
-            observation: The environment observation dict for the current step.
-                         Expected keys: title, body, code_snippet, existing_labels,
-                         task_level. Additional context keys are injected internally.
+            observation: The environment observation dict. Expected keys:
+                         pr_id, title, description, proposed_code,
+                         context_snippet, labels, task_level.
 
         Returns:
-            A dict with keys ``classification``, ``bug_line``, ``team``,
-            and ``suggested_fix``, ready to submit to the environment's step().
+            A dict with all ReviewAction keys:
+                review_decision, blocker_type, defect_category,
+                faulty_line, reviewer_team, suggested_change.
 
         Note:
-            This method never raises. Any unhandled internal exception causes
-            a safe fallback action to be returned with all optional fields nulled.
+            Never raises. Unhandled exceptions return a safe fallback dict.
         """
         try:
             # --- Step A: reset trace ---
             self.agent_trace = []
             self.episode_count += 1
 
-            # --- Step B: classify ---
-            result_clf = self._run_agent(self.classifier, observation)
-            self.agent_trace.append(result_clf)
+            # --- Step B: safety gate ---
+            result_gate = self._run_agent(self.safety_gate, observation)
+            self.agent_trace.append(result_gate)
+            gate_value: dict = result_gate.value or {}
+            review_decision = gate_value.get("review_decision") or "approve"
+            blocker_type = gate_value.get("blocker_type")
 
-            # --- Step C: enrich with classification ---
+            # --- Step C: enrich with decision context ---
             enriched_obs = observation.copy()
-            enriched_obs["classification_context"] = str(result_clf.value or "unknown")
+            enriched_obs["decision_context"] = review_decision
 
-            # --- Step D: locate bug line + route team ---
-            result_line = self._run_agent(self.bug_locator, enriched_obs)
-            result_team = self._run_agent(self.team_router, enriched_obs)
-            self.agent_trace.append(result_line)
+            # --- Step D: locate defect ---
+            result_defect = self._run_agent(self.defect_locator, enriched_obs)
+            self.agent_trace.append(result_defect)
+            defect_value: dict = result_defect.value or {}
+            defect_category = defect_value.get("defect_category")
+            faulty_line = defect_value.get("faulty_line")
+
+            # --- Step E: enrich with defect context ---
+            enriched_obs["defect_context"] = str(defect_category or "unknown")
+            enriched_obs["faulty_line_context"] = faulty_line
+
+            # --- Step F: route to reviewer team ---
+            result_team = self._run_agent(self.router, enriched_obs)
             self.agent_trace.append(result_team)
+            reviewer_team = result_team.value
 
-            # --- Step E: enrich with line + team ---
-            enriched_obs["bug_line_context"] = result_line.value
-            enriched_obs["team_context"] = str(result_team.value or "unknown")
+            # --- Step G: generate suggested change ---
+            enriched_obs["reviewer_team_context"] = str(reviewer_team or "unknown")
+            result_comment = self._run_agent(self.comment_agent, enriched_obs)
+            self.agent_trace.append(result_comment)
+            suggested_change = result_comment.value
 
-            # --- Step F: suggest fix ---
-            result_fix = self._run_agent(self.fix_suggester, enriched_obs)
-            self.agent_trace.append(result_fix)
-
-            # --- Step G: assemble action ---
+            # --- Step H: assemble ReviewAction dict ---
             return {
-                "classification": result_clf.value or "bug",
-                "bug_line": result_line.value,       # int or None
-                "team": result_team.value,            # str or None
-                "suggested_fix": result_fix.value,    # str or None
+                "review_decision": review_decision,
+                "blocker_type": blocker_type,
+                "defect_category": defect_category,
+                "faulty_line": faulty_line,
+                "reviewer_team": reviewer_team,
+                "suggested_change": suggested_change,
             }
 
         except Exception as exc:  # noqa: BLE001
             # Safety net: environment must always receive a valid action dict.
             return {
-                "classification": "bug",
-                "bug_line": None,
-                "team": None,
-                "suggested_fix": None,
+                "review_decision": "approve",
+                "blocker_type": None,
+                "defect_category": None,
+                "faulty_line": None,
+                "reviewer_team": None,
+                "suggested_change": None,
                 "_orchestrator_error": str(exc),
             }
 
@@ -147,12 +168,6 @@ class MultiAgentOrchestrator:
 
     def _run_agent(self, agent: BaseAgent, observation: dict) -> AgentResult:
         """Run a single agent with timing and automatic fallback on failure.
-
-        Wraps ``agent.run()`` in a try/except. If the call raises (which
-        should not happen given the base class guarantees, but can occur in
-        exotic failure modes), ``agent._keyword_fallback()`` is called instead.
-
-        The result is printed to stdout in a structured log line.
 
         Args:
             agent:       The specialist agent to invoke.
@@ -185,16 +200,7 @@ class MultiAgentOrchestrator:
         Useful for logging, debugging, and RL reward attribution.
 
         Returns:
-            A dict with keys:
-                - ``episode``        — current episode number (int)
-                - ``agents_run``     — number of agent results in the trace (int)
-                - ``results``        — list of per-agent dicts with agent, value,
-                                       confidence, and reasoning
-                - ``avg_confidence`` — mean confidence across all agents (float)
-
-        Note:
-            Call ``run()`` before this method. Returns zero counts if the trace
-            is empty. Never raises an exception.
+            A dict with keys: episode, agents_run, results, avg_confidence.
         """
         try:
             results = [
@@ -230,71 +236,62 @@ class MultiAgentOrchestrator:
             }
 
     def get_confidence_weighted_action(self) -> dict:
-        """Return a conservative action dict that nulls out low-confidence fields.
+        """Return an action dict that nulls out low-confidence fields.
 
-        Applies per-field confidence thresholds after a ``run()`` call:
-
-        - ``classification`` < 0.5  → apply keyword fallback from ClassifierAgent
-        - ``bug_line``       < 0.4  → set to None (abstain rather than guess)
-        - ``team``           < 0.4  → set to None
-        - ``suggested_fix``  < 0.3  → set to None
-
-        This trades recall for precision on ambiguous inputs — useful when the
-        downstream grader rewards abstaining over wrong answers.
+        Per-field confidence thresholds:
+            review_decision  < 0.5  → force "approve" (low confidence = conservative)
+            defect_category  < 0.4  → set to None
+            faulty_line      < 0.4  → set to None
+            reviewer_team    < 0.4  → set to None
+            suggested_change < 0.3  → set to None
 
         Returns:
-            An action dict with the same shape as ``run()``'s return value, but
-            with low-confidence fields replaced by None (or the fallback
-            classification).
-
-        Note:
-            Requires ``run()`` to have been called first; uses ``self.agent_trace``.
-            Never raises an exception.
+            Action dict with the same keys as run(), low-confidence fields nulled.
         """
         try:
             if len(self.agent_trace) < 4:
-                # Trace is incomplete — cannot derive weighted action.
                 return {
-                    "classification": "bug",
-                    "bug_line": None,
-                    "team": None,
-                    "suggested_fix": None,
+                    "review_decision": "approve",
+                    "blocker_type": None,
+                    "defect_category": None,
+                    "faulty_line": None,
+                    "reviewer_team": None,
+                    "suggested_change": None,
                 }
 
-            # agent_trace is always appended in order: clf, line, team, fix.
-            result_clf: AgentResult = self.agent_trace[0]
-            result_line: AgentResult = self.agent_trace[1]
+            # agent_trace order: gate, defect, router, comment
+            result_gate: AgentResult = self.agent_trace[0]
+            result_defect: AgentResult = self.agent_trace[1]
             result_team: AgentResult = self.agent_trace[2]
-            result_fix: AgentResult = self.agent_trace[3]
+            result_comment: AgentResult = self.agent_trace[3]
 
-            # Classification: fall back to keyword heuristic when uncertain.
-            if result_clf.confidence < 0.5:
-                # Reconstruct a minimal observation from whatever the trace holds.
-                # The orchestrator does not store the raw observation, so we
-                # build the fallback from the classifier's reasoning as context.
-                fallback = self.classifier._keyword_fallback(
-                    {"title": result_clf.reasoning, "body": "", "existing_labels": []}
-                )
-                classification: str = fallback.value or "bug"
-            else:
-                classification = result_clf.value or "bug"
+            gate_value: dict = result_gate.value or {}
+            review_decision = gate_value.get("review_decision") if result_gate.confidence >= 0.5 else "approve"
+            blocker_type = gate_value.get("blocker_type") if result_gate.confidence >= 0.5 else None
 
-            bug_line: Optional[int] = result_line.value if result_line.confidence >= 0.4 else None
-            team: Optional[str] = result_team.value if result_team.confidence >= 0.4 else None
-            suggested_fix: Optional[str] = result_fix.value if result_fix.confidence >= 0.3 else None
+            defect_value: dict = result_defect.value or {}
+            defect_category: Optional[str] = defect_value.get("defect_category") if result_defect.confidence >= 0.4 else None
+            faulty_line: Optional[int] = defect_value.get("faulty_line") if result_defect.confidence >= 0.4 else None
+
+            reviewer_team: Optional[str] = result_team.value if result_team.confidence >= 0.4 else None
+            suggested_change: Optional[str] = result_comment.value if result_comment.confidence >= 0.3 else None
 
             return {
-                "classification": classification,
-                "bug_line": bug_line,
-                "team": team,
-                "suggested_fix": suggested_fix,
+                "review_decision": review_decision,
+                "blocker_type": blocker_type,
+                "defect_category": defect_category,
+                "faulty_line": faulty_line,
+                "reviewer_team": reviewer_team,
+                "suggested_change": suggested_change,
             }
 
         except Exception as exc:  # noqa: BLE001
             return {
-                "classification": "bug",
-                "bug_line": None,
-                "team": None,
-                "suggested_fix": None,
+                "review_decision": "approve",
+                "blocker_type": None,
+                "defect_category": None,
+                "faulty_line": None,
+                "reviewer_team": None,
+                "suggested_change": None,
                 "_error": str(exc),
             }

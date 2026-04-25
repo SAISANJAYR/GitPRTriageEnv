@@ -1,23 +1,39 @@
-name: dev_triage_env
-version: "1.0.0"
+name: pr_regression_audit_env
+version: "2.0.0"
 description: >
-  GitHub issue triage environment where an LLM agent classifies issues,
-  identifies bug lines, routes to the correct team, and suggests fixes.
+  Automated PR Regression Auditor — an RL environment where agents detect
+  accidental regressions introduced in Pull Requests. PR descriptions describe
+  the intended feature; the proposed code secretly contains an unrelated defect.
+  Three progressively harder tasks test binary safety gating, static defect
+  localization, and cross-context integration analysis with reviewer routing.
 tasks:
   - id: task_easy
-    name: Issue Classification
+    name: PR Safety Gate
     difficulty: easy
-    description: Classify issue as bug, feature, or duplicate. Score 0 or 1.
+    description: >
+      Approve clean PRs or flag obvious blockers (debug_output, hardcoded_secret,
+      do_not_merge_comment, debug_test_bypass, syntax_error). Two-component reward:
+      review_decision (0.55) + blocker_type (0.45). Dataset: 6 clean + 9 flagged.
   - id: task_medium
-    name: Bug Line Identification  
+    name: Regression Localization
     difficulty: medium
-    description: Classify + find exact bug line. Partial credit for proximity.
+    description: >
+      Static defect analysis — identify the defect category (security/logic/performance)
+      and the exact 1-indexed faulty line in proposed_code. Partial credit for ±1 line
+      proximity. All medium PRs contain a self-contained defect requiring no external context.
   - id: task_hard
-    name: Full Triage + Fix Suggestion
+    name: Full Audit and Integration Review
     difficulty: hard
-    description: Classify + bug line + team routing + keyword-checked fix.
-author: your_hf_username
+    description: >
+      Integration defect analysis — proposed_code looks correct in isolation, but a
+      context_snippet (existing code/config) reveals a compatibility regression.
+      Five-component reward: review_decision + defect_category + faulty_line +
+      reviewer_team (infosec/devops/core-frontend/core-sysdev/aiml) + suggested_change
+      (keyword-checked, under 200 chars).
+author: SaiSanjayR
 tags:
   - openenv
   - code-review
+  - regression-detection
+  - multi-agent
   - developer-tools

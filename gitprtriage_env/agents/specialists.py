@@ -1,15 +1,15 @@
 """
 agents/specialists.py
 ---------------------
-Specialist agent implementations for the GitPRTriageEnv multi-agent triage system.
+Specialist agent implementations for the PRRegressionAuditEnv multi-agent review system.
 
 Four agents are defined here, each responsible for one component of the final
-action submitted to the environment:
+ReviewAction submitted to the environment:
 
-    ClassifierAgent   — bug / feature / duplicate
-    BugLocatorAgent   — exact 1-indexed bug line number (or null)
-    TeamRouterAgent   — webdev / devops / aiml (or null)
-    FixSuggesterAgent — one-sentence concrete fix description (or null)
+    SafetyGateAgent    — review_decision + blocker_type (Easy)
+    DefectLocatorAgent — defect_category + faulty_line (Medium + Hard)
+    ReviewerRouterAgent— reviewer_team (Hard)
+    ReviewCommentAgent — suggested_change (Hard)
 
 All agents inherit BaseAgent, use temperature=0.0 for determinism, and
 guarantee that _parse_response and _keyword_fallback never raise exceptions.
@@ -26,105 +26,93 @@ from agents.base import AgentResult, BaseAgent, safe_json_parse
 # Constants
 # ---------------------------------------------------------------------------
 
-_VALID_CLASSIFICATIONS: frozenset[str] = frozenset({"bug", "feature", "duplicate"})
-_VALID_TEAMS: frozenset[Optional[str]] = frozenset({"webdev", "devops", "aiml", None})
+_VALID_DECISIONS: frozenset[str] = frozenset({"approve", "request_changes"})
+_VALID_BLOCKER_TYPES: frozenset[Optional[str]] = frozenset({
+    "debug_output", "hardcoded_secret", "do_not_merge_comment",
+    "debug_test_bypass", "syntax_error", None
+})
+_VALID_DEFECT_CATEGORIES: frozenset[Optional[str]] = frozenset({
+    "security", "logic", "performance", None
+})
+_VALID_TEAMS: frozenset[Optional[str]] = frozenset({
+    "infosec", "devops", "core-frontend", "core-sysdev", "aiml", None
+})
 
 
 def _clamp(value: float) -> float:
-    """Clamp a float confidence value to the range [0.0, 1.0]."""
+    """Clamp a float confidence value to [0.0, 1.0]."""
     return max(0.0, min(1.0, value))
 
 
 # ---------------------------------------------------------------------------
-# 1. ClassifierAgent
+# 1. SafetyGateAgent
 # ---------------------------------------------------------------------------
 
+class SafetyGateAgent(BaseAgent):
+    """Makes the binary review decision and identifies obvious blockers.
 
-class ClassifierAgent(BaseAgent):
-    """Classifies a GitHub issue as 'bug', 'feature', or 'duplicate'.
-
-    This agent uses the issue title, body, and existing labels to produce
-    a classification with an associated confidence score and reasoning.
+    For Easy tasks: decides approve vs request_changes and names the blocker
+    type if one is present (debug_output, hardcoded_secret, etc.).
     """
 
     @property
     def name(self) -> str:
-        """Return the display name of this agent.
-
-        Returns:
-            ``"ClassifierAgent"``
-        """
-        return "ClassifierAgent"
+        return "SafetyGateAgent"
 
     def _get_system_prompt(self) -> str:
-        """Return the system-level instruction for the classifier.
-
-        Returns:
-            A prompt instructing the model to return a raw JSON classification.
-        """
         return (
-            "You are an expert at classifying GitHub issues into exactly one of three "
-            "categories. Respond ONLY with valid JSON: "
-            '{"classification": "bug"|"feature"|"duplicate", "confidence": 0.0-1.0, '
-            '"reasoning": "one sentence"}. '
-            "Rules: bug=something broken/crashing/wrong behavior; "
-            "feature=new capability requested; "
-            'duplicate=explicitly references another issue number or says "same as". '
-            "Never use markdown. Output raw JSON only."
+            "You are a senior code reviewer performing an initial safety scan of a Pull Request. "
+            "Your job: decide if the PR is safe to pass to reviewers, or if it has an obvious blocker. "
+            "Respond ONLY with valid JSON: "
+            '{"review_decision": "approve"|"request_changes", '
+            '"blocker_type": "debug_output"|"hardcoded_secret"|"do_not_merge_comment"|"debug_test_bypass"|"syntax_error"|null, '
+            '"confidence": 0.0-1.0, "reasoning": "one sentence"}. '
+            "Rules: "
+            "debug_output=print/console.log of secrets or auth data left in; "
+            "hardcoded_secret=literal API key, password, or token in code; "
+            "do_not_merge_comment=TODO: DO NOT MERGE or WIP HACK comment in code; "
+            "debug_test_bypass=hard-wired condition like 'or True' bypassing auth or gates; "
+            "syntax_error=unmatched bracket, invalid syntax that breaks the file. "
+            "Set blocker_type to null if the PR is clean. "
+            "Output raw JSON only, no markdown."
         )
 
     def build_prompt(self, observation: dict) -> str:
-        """Build the user prompt from the observation.
-
-        Uses title, body, and existing_labels only.
-
-        Args:
-            observation: Environment observation dict.
-
-        Returns:
-            Formatted string for the user turn.
-        """
         title: str = observation.get("title", "") or ""
-        body: str = observation.get("body", "") or ""
-        labels: list = observation.get("existing_labels", []) or []
+        description: str = observation.get("description", "") or ""
+        proposed_code: Optional[str] = observation.get("proposed_code")
+        labels: list = observation.get("labels", []) or []
         labels_str = ", ".join(labels) if labels else "none"
-        return (
-            f"Title: {title}\n"
-            f"Body: {body}\n"
-            f"Labels: {labels_str}\n\n"
-            "Classify this issue."
-        )
+
+        parts = [
+            f"PR Title: {title}",
+            f"Description: {description}",
+            f"Labels: {labels_str}",
+        ]
+        if proposed_code:
+            parts.append(f"\nProposed Code (1-indexed lines):\n{proposed_code}")
+        parts.append("\nScan this PR for obvious blockers and decide approve or request_changes.")
+        return "\n".join(parts)
 
     def _parse_response(self, raw: str) -> AgentResult:
-        """Parse the LLM response into an AgentResult.
-
-        Validates that the classification is one of the three legal values.
-        Falls back to None if it is not. Clamps confidence to [0.0, 1.0].
-
-        Args:
-            raw: Verbatim LLM output string.
-
-        Returns:
-            AgentResult with value set to the classification string or None.
-        """
         try:
             data: dict = safe_json_parse(raw)
-            raw_cls = data.get("classification")
-            classification: Optional[str] = (
-                raw_cls if raw_cls in _VALID_CLASSIFICATIONS else None
-            )
+            raw_decision = data.get("review_decision")
+            decision: Optional[str] = raw_decision if raw_decision in _VALID_DECISIONS else None
+            raw_blocker = data.get("blocker_type")
+            blocker: Optional[str] = raw_blocker if raw_blocker in _VALID_BLOCKER_TYPES else None
             confidence: float = _clamp(float(data.get("confidence", 0.5)))
             reasoning: str = str(data.get("reasoning", ""))
             return AgentResult(
-                value=classification,
+                value={"review_decision": decision, "blocker_type": blocker},
                 confidence=confidence,
                 reasoning=reasoning,
                 raw_response=raw,
                 agent_name=self.name,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return AgentResult(
-                value=None,
+                value={"review_decision": None, "blocker_type": None},
                 confidence=0.0,
                 reasoning=f"Parsing failed: {exc}",
                 raw_response=raw,
@@ -132,59 +120,38 @@ class ClassifierAgent(BaseAgent):
             )
 
     def _keyword_fallback(self, observation: dict) -> AgentResult:
-        """Classify using keyword heuristics when the LLM is unavailable.
-
-        Extends the base heuristic by also checking the ``existing_labels``
-        list: a label of ``"duplicate"`` immediately raises confidence to 0.6.
-
-        Priority order: duplicate label → duplicate keywords → feature keywords
-        → bug keywords → default bug.
-
-        Args:
-            observation: Environment observation dict.
-
-        Returns:
-            AgentResult with confidence=0.4 (or 0.6 for label-based duplicate).
-        """
         try:
-            title: str = observation.get("title", "") or ""
-            body: str = observation.get("body", "") or ""
-            labels: list = observation.get("existing_labels", []) or []
-            text = (title + " " + body).lower()
+            code: str = (observation.get("proposed_code") or "").lower()
+            title: str = (observation.get("title") or "").lower()
 
-            # Label-based duplicate detection (higher confidence).
-            if "duplicate" in [lbl.lower() for lbl in labels]:
-                return AgentResult(
-                    value="duplicate",
-                    confidence=0.6,
-                    reasoning="Existing label 'duplicate' detected.",
-                    raw_response="[keyword_fallback]",
-                    agent_name=self.name,
-                )
+            debug_signals = ["console.log", "print(", "# debug", "// debug", "alert("]
+            secret_signals = ["sk_live_", "sk_test_", "aws_secret", "api_key =", "password ="]
+            no_merge_signals = ["do not merge", "do_not_merge", "wip hack", "// wip"]
+            bypass_signals = ["or true", "or True", "if true:", "== true # bypass"]
+            syntax_signals = ["syntax_error", "def (\n", "(;", "[;"]
 
-            duplicate_signals = ["duplicate", "same as", "already filed", "#"]
-            feature_signals = ["add", "support", "feature", "request", "would be nice"]
-            bug_signals = ["crash", "error", "fail", "broken", "not working"]
-
-            if any(kw in text for kw in duplicate_signals):
-                classification, reasoning = "duplicate", "Keyword heuristic matched duplicate signal words."
-            elif any(kw in text for kw in feature_signals):
-                classification, reasoning = "feature", "Keyword heuristic matched feature-request signal words."
-            elif any(kw in text for kw in bug_signals):
-                classification, reasoning = "bug", "Keyword heuristic matched bug signal words."
+            if any(s in code for s in no_merge_signals):
+                blocker = "do_not_merge_comment"
+            elif any(s in code for s in secret_signals):
+                blocker = "hardcoded_secret"
+            elif any(s in code for s in bypass_signals):
+                blocker = "debug_test_bypass"
+            elif any(s in code for s in debug_signals):
+                blocker = "debug_output"
             else:
-                classification, reasoning = "bug", "No strong signal found; defaulting to bug."
+                blocker = None
 
+            decision = "request_changes" if blocker else "approve"
             return AgentResult(
-                value=classification,
+                value={"review_decision": decision, "blocker_type": blocker},
                 confidence=0.4,
-                reasoning=reasoning,
+                reasoning="Keyword heuristic safety scan.",
                 raw_response="[keyword_fallback]",
                 agent_name=self.name,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return AgentResult(
-                value=None,
+                value={"review_decision": "approve", "blocker_type": None},
                 confidence=0.0,
                 reasoning=f"Keyword fallback failed: {exc}",
                 raw_response="[keyword_fallback_error]",
@@ -193,103 +160,83 @@ class ClassifierAgent(BaseAgent):
 
 
 # ---------------------------------------------------------------------------
-# 2. BugLocatorAgent
+# 2. DefectLocatorAgent
 # ---------------------------------------------------------------------------
 
+class DefectLocatorAgent(BaseAgent):
+    """Identifies the defect category and exact faulty line in proposed_code.
 
-class BugLocatorAgent(BaseAgent):
-    """Identifies the exact 1-indexed line number where a bug resides.
-
-    If no code snippet is present or no bug is identifiable, the agent
-    returns ``value=None``.
+    Used for Medium (proposed_code only) and Hard (proposed_code + context_snippet).
+    The defect category is one of: security, logic, performance.
     """
 
     @property
     def name(self) -> str:
-        """Return the display name of this agent.
-
-        Returns:
-            ``"BugLocatorAgent"``
-        """
-        return "BugLocatorAgent"
+        return "DefectLocatorAgent"
 
     def _get_system_prompt(self) -> str:
-        """Return the system-level instruction for the bug locator.
-
-        Returns:
-            A prompt instructing the model to return the bug line as raw JSON.
-        """
         return (
-            "You are an expert code reviewer who identifies the exact line number "
-            "containing a bug. Respond ONLY with JSON: "
-            '{"bug_line": integer_or_null, "confidence": 0.0-1.0, '
+            "You are an expert code reviewer identifying defects in Pull Request code. "
+            "Respond ONLY with valid JSON: "
+            '{"defect_category": "security"|"logic"|"performance", '
+            '"faulty_line": integer, "confidence": 0.0-1.0, '
             '"reasoning": "one sentence explaining what is wrong on that line"}. '
-            "If there is no code snippet or no bug, set bug_line to null. "
-            "Line numbers are 1-indexed as shown in the snippet. "
+            "Categories: "
+            "security=vulnerability that can be exploited (injection, insecure config, data exposure, auth bypass); "
+            "logic=incorrect behavior (wrong condition, wrong operator, off-by-one, wrong order, data leakage); "
+            "performance=resource inefficiency (unnecessary load, repeated work, memory accumulation, wasted compute). "
+            "faulty_line is the 1-indexed line number in the Proposed Code where the defect lives. "
+            "For Hard tasks, look at how the proposed code interacts with the Context Snippet to identify the defect. "
             "Output raw JSON only, no markdown."
         )
 
     def build_prompt(self, observation: dict) -> str:
-        """Build the user prompt from the observation.
+        description: str = observation.get("description", "") or ""
+        proposed_code: Optional[str] = observation.get("proposed_code")
+        context_snippet: Optional[str] = observation.get("context_snippet")
+        decision_context: str = observation.get("decision_context") or "request_changes"
 
-        Uses body and code_snippet only. If the snippet is absent, prompts the
-        model to return ``bug_line: null``.
-
-        Args:
-            observation: Environment observation dict.
-
-        Returns:
-            Formatted string for the user turn.
-        """
-        body: str = observation.get("body", "") or ""
-        snippet: Optional[str] = observation.get("code_snippet")
-
-        if snippet is None:
-            return "No code snippet provided. Return bug_line: null."
-
-        return (
-            f"Issue description: {body}\n\n"
-            f"Code (lines are 1-indexed):\n{snippet}\n\n"
-            "Identify the exact line containing the bug."
+        parts = [
+            f"PR Description: {description}",
+            f"Review Decision (upstream): {decision_context}",
+        ]
+        if proposed_code:
+            parts.append(f"\nProposed Code (1-indexed):\n{proposed_code}")
+        if context_snippet:
+            parts.append(
+                f"\nContext Snippet (existing code/config this PR interacts with):\n{context_snippet}"
+            )
+        parts.append(
+            "\nIdentify the defect category and the exact 1-indexed line in Proposed Code containing the flaw."
         )
+        return "\n".join(parts)
 
     def _parse_response(self, raw: str) -> AgentResult:
-        """Parse the LLM response into an AgentResult.
-
-        Converts ``bug_line`` to a positive integer, or sets it to None if the
-        value is absent, non-numeric, or non-positive. Clamps confidence.
-
-        Args:
-            raw: Verbatim LLM output string.
-
-        Returns:
-            AgentResult with value set to a positive int or None.
-        """
         try:
             data: dict = safe_json_parse(raw)
-            raw_line = data.get("bug_line")
-            bug_line: Optional[int] = None
-
+            raw_cat = data.get("defect_category")
+            category: Optional[str] = raw_cat if raw_cat in _VALID_DEFECT_CATEGORIES else None
+            raw_line = data.get("faulty_line")
+            faulty_line: Optional[int] = None
             if raw_line is not None:
                 try:
                     candidate = int(raw_line)
                     if candidate > 0:
-                        bug_line = candidate
+                        faulty_line = candidate
                 except (TypeError, ValueError):
-                    bug_line = None
-
+                    pass
             confidence: float = _clamp(float(data.get("confidence", 0.5)))
             reasoning: str = str(data.get("reasoning", ""))
             return AgentResult(
-                value=bug_line,
+                value={"defect_category": category, "faulty_line": faulty_line},
                 confidence=confidence,
                 reasoning=reasoning,
                 raw_response=raw,
                 agent_name=self.name,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return AgentResult(
-                value=None,
+                value={"defect_category": None, "faulty_line": None},
                 confidence=0.0,
                 reasoning=f"Parsing failed: {exc}",
                 raw_response=raw,
@@ -297,107 +244,92 @@ class BugLocatorAgent(BaseAgent):
             )
 
     def _keyword_fallback(self, observation: dict) -> AgentResult:
-        """Return a zero-confidence result when no LLM is available.
+        try:
+            code: str = (observation.get("proposed_code") or "").lower()
+            context: str = (observation.get("context_snippet") or "").lower()
+            text = code + " " + context
 
-        Code analysis cannot be performed without an LLM, so this fallback
-        always returns ``value=None``.
+            security_signals = ["inject", "exec(", "eval(", "f\"select", "secure=false", "algorithm", "authorization"]
+            performance_signals = ["pipeline(", "load_model", "/ 255", "loss +=", "fits_transform", "for i in"]
 
-        Args:
-            observation: Environment observation dict (unused).
+            if any(s in text for s in security_signals):
+                category = "security"
+            elif any(s in text for s in performance_signals):
+                category = "performance"
+            else:
+                category = "logic"
 
-        Returns:
-            AgentResult with value=None and confidence=0.0.
-        """
-        return AgentResult(
-            value=None,
-            confidence=0.0,
-            reasoning="No code analysis available without LLM.",
-            raw_response="[keyword_fallback]",
-            agent_name=self.name,
-        )
+            return AgentResult(
+                value={"defect_category": category, "faulty_line": None},
+                confidence=0.3,
+                reasoning="Keyword heuristic defect classification.",
+                raw_response="[keyword_fallback]",
+                agent_name=self.name,
+            )
+        except Exception as exc:
+            return AgentResult(
+                value={"defect_category": None, "faulty_line": None},
+                confidence=0.0,
+                reasoning=f"Keyword fallback failed: {exc}",
+                raw_response="[keyword_fallback_error]",
+                agent_name=self.name,
+            )
 
 
 # ---------------------------------------------------------------------------
-# 3. TeamRouterAgent
+# 3. ReviewerRouterAgent
 # ---------------------------------------------------------------------------
 
+class ReviewerRouterAgent(BaseAgent):
+    """Routes the flagged PR to the correct expert reviewer team.
 
-class TeamRouterAgent(BaseAgent):
-    """Routes a GitHub issue to the correct internal engineering team.
-
-    Valid routing targets are ``"webdev"``, ``"devops"``, ``"aiml"``, or
-    ``None`` when the team cannot be determined.
+    Valid teams: infosec, devops, core-frontend, core-sysdev, aiml.
+    Used for Hard tasks only. Receives defect_category context from upstream.
     """
 
     @property
     def name(self) -> str:
-        """Return the display name of this agent.
-
-        Returns:
-            ``"TeamRouterAgent"``
-        """
-        return "TeamRouterAgent"
+        return "ReviewerRouterAgent"
 
     def _get_system_prompt(self) -> str:
-        """Return the system-level instruction for the team router.
-
-        Returns:
-            A prompt detailing team responsibilities and expected JSON output.
-        """
         return (
-            "You are an expert at routing engineering issues to the correct internal team. "
-            "Teams are: "
-            "webdev (frontend, backend, REST APIs, web security, databases, sessions, auth), "
-            "devops (Docker, Kubernetes, CI/CD, GitHub Actions, infrastructure, deployment, monitoring), "
-            "aiml (machine learning models, training pipelines, GPU/CUDA, embeddings, NLP, data preprocessing). "
-            'Respond ONLY with JSON: {"team": "webdev"|"devops"|"aiml"|null, '
+            "You are a senior engineering lead routing a flagged Pull Request to the correct expert team. "
+            "Respond ONLY with valid JSON: "
+            '{"reviewer_team": "infosec"|"devops"|"core-frontend"|"core-sysdev"|"aiml", '
             '"confidence": 0.0-1.0, "reasoning": "one sentence"}. '
-            "Set null if truly cannot determine. Output raw JSON only."
+            "Team responsibilities: "
+            "infosec=authentication, authorization, JWT, secrets management, XSS, injection, crypto; "
+            "devops=Docker, Kubernetes, CI/CD pipelines, GitHub Actions, build systems, monitoring; "
+            "core-frontend=frontend code, REST API routes, CORS, middleware, web auth flows, templates; "
+            "core-sysdev=backend/system logic, database connections, ORM, connection pooling, server-side validation; "
+            "aiml=ML models, training loops, GPU/CUDA, data pipelines, model loading, embeddings. "
+            "Output raw JSON only, no markdown."
         )
 
     def build_prompt(self, observation: dict) -> str:
-        """Build the user prompt from the observation.
-
-        Uses title, body, existing_labels, and the optional
-        ``classification_context`` key injected by the orchestrator.
-
-        Args:
-            observation: Environment observation dict. May contain an extra key
-                         ``classification_context`` (str) with the previously
-                         determined issue classification.
-
-        Returns:
-            Formatted string for the user turn.
-        """
         title: str = observation.get("title", "") or ""
-        body: str = observation.get("body", "") or ""
-        labels: list = observation.get("existing_labels", []) or []
+        proposed_code: Optional[str] = observation.get("proposed_code")
+        context_snippet: Optional[str] = observation.get("context_snippet")
+        defect_context: str = observation.get("defect_context") or "unknown"
+        labels: list = observation.get("labels", []) or []
         labels_str = ", ".join(labels) if labels else "none"
-        cls_context: str = observation.get("classification_context") or "unknown"
 
-        return (
-            f"Title: {title}\n"
-            f"Body: {body}\n"
-            f"Labels: {labels_str}\n"
-            f"Issue type: {cls_context}\n\n"
-            "Route to the correct team."
-        )
+        parts = [
+            f"PR Title: {title}",
+            f"Labels: {labels_str}",
+            f"Defect Category (upstream): {defect_context}",
+        ]
+        if proposed_code:
+            parts.append(f"\nProposed Code:\n{proposed_code}")
+        if context_snippet:
+            parts.append(f"\nContext Snippet:\n{context_snippet}")
+        parts.append("\nRoute this PR to the correct expert reviewer team.")
+        return "\n".join(parts)
 
     def _parse_response(self, raw: str) -> AgentResult:
-        """Parse the LLM response into an AgentResult.
-
-        Validates that ``team`` is one of the four legal values (including
-        None). Clamps confidence to [0.0, 1.0].
-
-        Args:
-            raw: Verbatim LLM output string.
-
-        Returns:
-            AgentResult with value set to the team string or None.
-        """
         try:
             data: dict = safe_json_parse(raw)
-            raw_team = data.get("team")
+            raw_team = data.get("reviewer_team")
             team: Optional[str] = raw_team if raw_team in _VALID_TEAMS else None
             confidence: float = _clamp(float(data.get("confidence", 0.5)))
             reasoning: str = str(data.get("reasoning", ""))
@@ -408,7 +340,7 @@ class TeamRouterAgent(BaseAgent):
                 raw_response=raw,
                 agent_name=self.name,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return AgentResult(
                 value=None,
                 confidence=0.0,
@@ -418,40 +350,37 @@ class TeamRouterAgent(BaseAgent):
             )
 
     def _keyword_fallback(self, observation: dict) -> AgentResult:
-        """Route using keyword heuristics when the LLM is unavailable.
-
-        Checks title and body (both lowercased) for domain-specific signal
-        words in priority order: devops → aiml → webdev (default).
-
-        Args:
-            observation: Environment observation dict.
-
-        Returns:
-            AgentResult with confidence=0.45 and the heuristic team routing.
-        """
         try:
-            title: str = observation.get("title", "") or ""
-            body: str = observation.get("body", "") or ""
-            text = (title + " " + body).lower()
+            title: str = (observation.get("title") or "").lower()
+            code: str = (observation.get("proposed_code") or "").lower()
+            context: str = (observation.get("context_snippet") or "").lower()
+            defect: str = (observation.get("defect_context") or "").lower()
+            text = title + " " + code + " " + context
 
-            devops_signals = ["docker", "kubernetes", "k8s", "ci", "deploy", "pipeline", "helm"]
-            aiml_signals = ["model", "training", "cuda", "gpu", "embedding", "torch", "tensorflow", "ml", "neural"]
+            infosec_signals = ["jwt", "auth", "secret", "token", "password", "injection", "xss", "cors"]
+            devops_signals = ["docker", "kubernetes", "k8s", "ci/cd", "github actions", "deploy", "dockerfile"]
+            aiml_signals = ["model", "training", "cuda", "gpu", "pipeline(", "torch", "sklearn", "epoch"]
+            frontend_signals = ["cors", "template", "oauth", "redirect", "middleware", "route"]
 
-            if any(kw in text for kw in devops_signals):
-                team, reasoning = "devops", "Keyword heuristic matched DevOps signal words."
-            elif any(kw in text for kw in aiml_signals):
-                team, reasoning = "aiml", "Keyword heuristic matched AIML signal words."
+            if any(s in text for s in infosec_signals) or "security" in defect:
+                team = "infosec"
+            elif any(s in text for s in devops_signals):
+                team = "devops"
+            elif any(s in text for s in aiml_signals):
+                team = "aiml"
+            elif any(s in text for s in frontend_signals):
+                team = "core-frontend"
             else:
-                team, reasoning = "webdev", "No DevOps/AIML signal; defaulting to webdev."
+                team = "core-sysdev"
 
             return AgentResult(
                 value=team,
-                confidence=0.45,
-                reasoning=reasoning,
+                confidence=0.4,
+                reasoning="Keyword heuristic team routing.",
                 raw_response="[keyword_fallback]",
                 agent_name=self.name,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return AgentResult(
                 value=None,
                 confidence=0.0,
@@ -462,101 +391,70 @@ class TeamRouterAgent(BaseAgent):
 
 
 # ---------------------------------------------------------------------------
-# 4. FixSuggesterAgent
+# 4. ReviewCommentAgent
 # ---------------------------------------------------------------------------
 
+class ReviewCommentAgent(BaseAgent):
+    """Generates a concise, technically specific suggested code change.
 
-class FixSuggesterAgent(BaseAgent):
-    """Generates a concise, technically specific one-sentence fix suggestion.
-
-    Uses the issue body, code snippet, and optional context from the
-    orchestrator (bug line number and routed team) to produce an actionable
-    fix description.
+    The suggestion must be one sentence and under 200 characters to prevent
+    keyword stuffing. Used for Hard tasks only.
     """
 
     @property
     def name(self) -> str:
-        """Return the display name of this agent.
-
-        Returns:
-            ``"FixSuggesterAgent"``
-        """
-        return "FixSuggesterAgent"
+        return "ReviewCommentAgent"
 
     def _get_system_prompt(self) -> str:
-        """Return the system-level instruction for the fix suggester.
-
-        Returns:
-            A prompt instructing the model to produce a specific one-sentence
-            fix description as raw JSON.
-        """
         return (
-            "You are a senior engineer who writes concise, actionable bug fix suggestions. "
-            'Respond ONLY with JSON: {"suggested_fix": "one concrete sentence describing '
-            'exactly what to change and why", "confidence": 0.0-1.0, '
-            '"reasoning": "one sentence"}. '
-            "The fix must be specific — name the exact function, variable, or concept to change. "
-            "Do not say 'fix the bug'. Mention the technical solution. "
-            "Output raw JSON only."
+            "You are a senior engineer writing a precise, actionable code review comment. "
+            "Respond ONLY with valid JSON: "
+            '{"suggested_change": "one concrete sentence under 200 characters describing exactly what to change and why", '
+            '"confidence": 0.0-1.0, "reasoning": "one sentence"}. '
+            "Rules: "
+            "Your suggested_change must be UNDER 200 characters total. "
+            "Name the exact function, variable, line, or config key to change. "
+            "Do not just say 'fix the bug' — specify the technical correction. "
+            "Output raw JSON only, no markdown."
         )
 
     def build_prompt(self, observation: dict) -> str:
-        """Build the user prompt from the observation.
+        description: str = observation.get("description", "") or ""
+        proposed_code: Optional[str] = observation.get("proposed_code")
+        context_snippet: Optional[str] = observation.get("context_snippet")
+        faulty_line: Optional[int] = observation.get("faulty_line_context")
+        team: Optional[str] = observation.get("reviewer_team_context")
 
-        Uses body, code_snippet, and optional orchestrator-injected keys
-        ``bug_line_context`` (int or None) and ``team_context`` (str or None).
+        parts = [f"PR Description: {description}"]
+        if proposed_code:
+            parts.append(f"\nProposed Code:\n{proposed_code}")
+        if context_snippet:
+            parts.append(f"\nContext Snippet:\n{context_snippet}")
 
-        Args:
-            observation: Environment observation dict. May contain extra keys
-                         ``bug_line_context`` and ``team_context`` injected by
-                         the orchestrator.
-
-        Returns:
-            Formatted string for the user turn.
-        """
-        body: str = observation.get("body", "") or ""
-        snippet: Optional[str] = observation.get("code_snippet")
-        bug_line: Optional[int] = observation.get("bug_line_context")
-        team: Optional[str] = observation.get("team_context")
-
-        snippet_text = snippet if snippet is not None else "No code provided"
-        line_text = str(bug_line) if bug_line is not None else "unknown"
-        team_text = team if team is not None else "unknown"
-
-        return (
-            f"Issue: {body}\n\n"
-            f"Code:\n{snippet_text}\n\n"
-            f"The bug is on line {line_text}. Team: {team_text}.\n\n"
-            "Suggest a specific one-sentence fix."
+        line_text = str(faulty_line) if faulty_line is not None else "unknown"
+        team_text = team if team else "unknown"
+        parts.append(
+            f"\nThe defect is on line {line_text} of the proposed code. Assigned to team: {team_text}."
         )
+        parts.append("Write a concise one-sentence suggested change under 200 characters.")
+        return "\n".join(parts)
 
     def _parse_response(self, raw: str) -> AgentResult:
-        """Parse the LLM response into an AgentResult.
-
-        Extracts the ``suggested_fix`` string. If it is absent or empty, sets
-        value to None. Clamps confidence to [0.0, 1.0].
-
-        Args:
-            raw: Verbatim LLM output string.
-
-        Returns:
-            AgentResult with value set to the fix string or None.
-        """
         try:
             data: dict = safe_json_parse(raw)
-            fix: Optional[str] = data.get("suggested_fix") or None
-            if fix is not None:
-                fix = fix.strip() or None
+            suggestion: Optional[str] = data.get("suggested_change") or None
+            if suggestion is not None:
+                suggestion = suggestion.strip() or None
             confidence: float = _clamp(float(data.get("confidence", 0.5)))
             reasoning: str = str(data.get("reasoning", ""))
             return AgentResult(
-                value=fix,
+                value=suggestion,
                 confidence=confidence,
                 reasoning=reasoning,
                 raw_response=raw,
                 agent_name=self.name,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return AgentResult(
                 value=None,
                 confidence=0.0,
@@ -566,21 +464,10 @@ class FixSuggesterAgent(BaseAgent):
             )
 
     def _keyword_fallback(self, observation: dict) -> AgentResult:
-        """Return a zero-confidence result when the LLM is unavailable.
-
-        Generating a specific fix suggestion without an LLM is not feasible,
-        so this always returns ``value=None``.
-
-        Args:
-            observation: Environment observation dict (unused).
-
-        Returns:
-            AgentResult with value=None and confidence=0.0.
-        """
         return AgentResult(
             value=None,
             confidence=0.0,
-            reasoning="Fix suggestion unavailable without LLM.",
+            reasoning="Suggested change unavailable without LLM.",
             raw_response="[keyword_fallback]",
             agent_name=self.name,
         )

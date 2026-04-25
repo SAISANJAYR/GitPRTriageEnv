@@ -1,23 +1,23 @@
 """
-Multi-agent triage system for DevTriageEnv.
+Multi-agent PR review system for PRRegressionAuditEnv.
 
 Agents:
-  ClassifierAgent   — classifies issue as bug/feature/duplicate
-  BugLocatorAgent   — identifies exact bug line in code snippet
-  TeamRouterAgent   — routes issue to webdev/devops/aiml team
-  FixSuggesterAgent — generates a concrete one-sentence fix suggestion
+    SafetyGateAgent      — review_decision + blocker_type (Easy)
+    DefectLocatorAgent   — defect_category + faulty_line (Medium + Hard)
+    ReviewerRouterAgent  — reviewer_team routing (Hard only)
+    ReviewCommentAgent   — concise suggested_change under 200 chars (Hard only)
 
 Orchestrator:
-  MultiAgentOrchestrator — coordinates all 4 agents in sequence,
-                           passes upstream results as context downstream,
-                           returns merged action dict
+    MultiAgentOrchestrator — coordinates all 4 agents in dependency order,
+                             passes upstream results as context downstream,
+                             returns a dict matching ReviewAction fields.
 """
 from agents.base import AgentResult, BaseAgent, safe_json_parse
 from agents.specialists import (
-    ClassifierAgent,
-    BugLocatorAgent,
-    TeamRouterAgent,
-    FixSuggesterAgent,
+    SafetyGateAgent,
+    DefectLocatorAgent,
+    ReviewerRouterAgent,
+    ReviewCommentAgent,
 )
 from agents.orchestrator import MultiAgentOrchestrator
 
@@ -25,9 +25,9 @@ __all__ = [
     "AgentResult",
     "BaseAgent",
     "safe_json_parse",
-    "ClassifierAgent",
-    "BugLocatorAgent",
-    "TeamRouterAgent",
-    "FixSuggesterAgent",
+    "SafetyGateAgent",
+    "DefectLocatorAgent",
+    "ReviewerRouterAgent",
+    "ReviewCommentAgent",
     "MultiAgentOrchestrator",
 ]
