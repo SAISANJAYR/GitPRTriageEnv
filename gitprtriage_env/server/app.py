@@ -1,14 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from server.environment import DevTriageEnvironment
-from models import TriageAction
+from server.environment import PRRegressionAuditEnvironment
+from models import ReviewAction
+import uvicorn
 
-app = FastAPI(title="GitPRTriage Env")
-
-@app.get("/")
-def root():
-    # Provide a friendly landing message instead of FastAPI's default 404
-    return {"message": "GitPRTriage Env API is live! Navigate to /docs to use the interactive Swagger UI.", "status": "healthy"}
+app = FastAPI(title="PRRegressionAuditEnv")
 
 app.add_middleware(
     CORSMiddleware,
@@ -18,62 +14,84 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-env = DevTriageEnvironment()
+env = PRRegressionAuditEnvironment()
+
+
+@app.get("/")
+def root():
+    return {
+        "message": "PRRegressionAuditEnv API is live! Navigate to /docs for the interactive Swagger UI.",
+        "status": "healthy",
+    }
+
 
 @app.get("/health")
 def health():
-    return {"status": "healthy", "issues_loaded": len(env.all_issues)}
+    return {"status": "healthy", "prs_loaded": len(env.all_prs)}
+
 
 @app.post("/reset")
 def reset():
     return env.reset().model_dump()
 
+
 @app.post("/step")
-def step(action: TriageAction):
+def step(action: ReviewAction):
     return env.step(action).model_dump()
+
 
 @app.get("/state")
 def state():
     return env.state.model_dump()
+
 
 @app.get("/tasks")
 def tasks():
     return [
         {
             "id": "task_easy",
-            "name": "Issue Classification",
+            "name": "PR Safety Gate",
             "difficulty": "easy",
-            "description": "Classify issue as bug, feature, or duplicate. Score 0 or 1."
+            "description": (
+                "Approve clean PRs or request_changes on obviously flagged ones. "
+                "Two-component reward: review_decision (0.55) + blocker_type (0.45)."
+            ),
         },
         {
             "id": "task_medium",
-            "name": "Bug Line Identification",
+            "name": "Regression Localization",
             "difficulty": "medium",
-            "description": "Classify + find exact bug line. Partial credit for proximity."
+            "description": (
+                "Identify the defect category and exact faulty line in the proposed code. "
+                "Static analysis — defect is self-contained in proposed_code. "
+                "Partial credit for proximity (±1 line)."
+            ),
         },
         {
             "id": "task_hard",
-            "name": "Full Triage + Fix Suggestion",
+            "name": "Full Audit & Integration Review",
             "difficulty": "hard",
-            "description": "Classify + bug line + team routing + keyword-checked fix."
-        }
+            "description": (
+                "Integration analysis — proposed_code looks fine in isolation, but a "
+                "context_snippet reveals a compatibility break with the existing system. "
+                "Five-component reward: decision, defect category, faulty line, "
+                "reviewer team routing, and a concise suggested change."
+            ),
+        },
     ]
 
-# ---------------------------------------------------------------------------
-# Curriculum + Multi-agent monitoring endpoints
-# ---------------------------------------------------------------------------
 
 @app.get("/curriculum")
 def curriculum_stats():
-    """Live curriculum progression -- shows current phase and agent performance.
+    """Live curriculum progression — shows current phase and agent performance.
 
-    Returns the curriculum sampler's full state so you can monitor:
-    - Which phase the curriculum is in (bootstrap/intermediate/advanced)
-    - Current sampling weights (how often each difficulty is served)
+    Returns the curriculum sampler's full state including:
+    - Current phase (bootstrap / intermediate / advanced)
+    - Current sampling weights per difficulty
     - Recent average reward per difficulty level
-    - History of phase transitions with the episode they occurred
+    - History of phase transitions with episode numbers
 
-    Use this during RL training to verify the curriculum is progressing.
+    Use during RL training to verify curriculum is progressing.
     """
     return env.get_curriculum_stats()
 
@@ -83,12 +101,11 @@ def audit_log(n: int = 20):
     """Recent episode audit log for reward-hacking detection.
 
     Returns the last n episode records. Each record contains:
-    - level: difficulty of the issue served (easy/medium/hard)
-    - reward: score received (0.001 to 0.999)
+    - level: difficulty of the PR served (easy/medium/hard)
+    - reward: scalar score received (0.001 to 0.999)
     - episode: episode number
 
-    Monitor this for suspicious reward patterns (e.g. always 0.999
-    on hard issues from episode 1 -- that's reward hacking).
+    Watch for suspicious patterns (e.g. always 0.999 on hard from episode 1).
 
     Args:
         n: Number of recent episodes to return (default 20, max 50)
@@ -98,63 +115,61 @@ def audit_log(n: int = 20):
 
 @app.get("/agents/info")
 def agents_info():
-    """Multi-agent architecture description for the triage system.
+    """Multi-agent architecture description for the PR review system.
 
-    Documents the 4-agent pipeline that produces triage actions:
-    1. ClassifierAgent   -> bug / feature / duplicate
-    2. BugLocatorAgent   -> exact bug line number
-    3. TeamRouterAgent   -> webdev / devops / aiml
-    4. FixSuggesterAgent -> concrete one-sentence fix
+    Documents the 4-agent sequential pipeline:
+    1. SafetyGateAgent    -> review_decision + blocker_type (Easy)
+    2. DefectLocatorAgent -> defect_category + faulty_line (Medium + Hard)
+    3. ReviewerRouterAgent-> reviewer_team (Hard only)
+    4. ReviewCommentAgent -> suggested_change (Hard only)
 
     Each agent has a focused system prompt and keyword fallback.
-    The orchestrator passes upstream results as context to downstream agents.
+    Upstream results are injected as context into downstream agents.
     """
     return {
         "architecture": "multi-agent-sequential",
         "description": (
-            "Four specialist LLM agents triage issues in dependency order. "
+            "Four specialist LLM agents review PRs in dependency order. "
             "Each agent receives only the information relevant to its sub-task. "
             "Upstream results are injected as context for downstream agents."
         ),
         "pipeline": [
             {
                 "step": 1,
-                "agent": "ClassifierAgent",
-                "input_fields": ["title", "body", "existing_labels"],
-                "output_field": "classification",
-                "valid_values": ["bug", "feature", "duplicate"],
-                "reward_weight": {"easy": 1.0, "medium": 0.40, "hard": 0.25},
+                "agent": "SafetyGateAgent",
+                "input_fields": ["title", "description", "proposed_code", "labels"],
+                "output_fields": ["review_decision", "blocker_type"],
+                "reward_weight": {"easy": 1.0, "medium": 0.10, "hard": 0.05},
             },
             {
                 "step": 2,
-                "agent": "BugLocatorAgent",
-                "input_fields": ["body", "code_snippet", "classification_context"],
-                "output_field": "bug_line",
-                "valid_values": "positive integer or null",
-                "reward_weight": {"easy": 0.0, "medium": 0.60, "hard": 0.25},
+                "agent": "DefectLocatorAgent",
+                "input_fields": ["description", "proposed_code", "decision_context"],
+                "output_fields": ["defect_category", "faulty_line"],
+                "reward_weight": {"easy": 0.0, "medium": 0.75, "hard": 0.45},
             },
             {
                 "step": 3,
-                "agent": "TeamRouterAgent",
-                "input_fields": ["title", "body", "existing_labels", "classification_context"],
-                "output_field": "team",
-                "valid_values": ["webdev", "devops", "aiml", "null"],
+                "agent": "ReviewerRouterAgent",
+                "input_fields": ["title", "proposed_code", "context_snippet", "defect_context"],
+                "output_fields": ["reviewer_team"],
                 "reward_weight": {"easy": 0.0, "medium": 0.0, "hard": 0.25},
             },
             {
                 "step": 4,
-                "agent": "FixSuggesterAgent",
-                "input_fields": ["body", "code_snippet", "bug_line_context", "team_context"],
-                "output_field": "suggested_fix",
-                "valid_values": "string or null",
+                "agent": "ReviewCommentAgent",
+                "input_fields": [
+                    "description", "proposed_code", "context_snippet",
+                    "faulty_line_context", "reviewer_team_context"
+                ],
+                "output_fields": ["suggested_change"],
                 "reward_weight": {"easy": 0.0, "medium": 0.0, "hard": 0.25},
             },
         ],
         "anti_reward_hacking": {
-            "independent_verifiers": 4,
+            "blocker_type_required_for_clean_prs": "null — prevents always-request_changes exploit",
+            "suggested_change_max_chars": 200,
             "curriculum_phases": ["bootstrap", "intermediate", "advanced"],
-            "confidence_thresholding": True,
-            "timeout_penalty": True,
             "audit_log": True,
         },
         "curriculum": {
@@ -170,13 +185,14 @@ def agents_info():
         },
     }
 
+
 @app.get("/guards")
 def guard_summary():
     """Anti-reward-hacking guard suite statistics.
 
     Returns a summary of all reward-hacking detection activity:
-    - total_episodes: how many episodes have been evaluated
-    - total_penalties_applied: how many times a guard fired
+    - total_episodes: how many episodes have been guard-evaluated
+    - total_penalties_applied: how many times any guard fired
     - penalty_rate: fraction of episodes where reward was adjusted
     - fast_response_rate: fraction of responses under 200ms threshold
     - guards: description of each active guard
@@ -200,9 +216,9 @@ def guard_audit(n: int = 20):
     - reasons: human-readable explanation for each guard firing
 
     Example of keyword stuffing being caught:
-      original_reward: 0.999 → adjusted_reward: 0.499
+      original_reward: 0.999 -> adjusted_reward: 0.499
       guard: KeywordStuffingDetector
-      reason: Fix keyword density 0.67 exceeds 0.40 threshold
+      reason: suggested_change keyword density 0.67 exceeds 0.40 threshold
 
     Args:
         n: Number of recent entries (default 20)
@@ -210,12 +226,9 @@ def guard_audit(n: int = 20):
     return env.get_guard_audit(n)
 
 
-import uvicorn
-
-
 def main():
-    uvicorn.run('server.app:app', host='0.0.0.0', port=7860)
+    uvicorn.run("server.app:app", host="0.0.0.0", port=7860)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
-

@@ -1,86 +1,170 @@
 import json
-import random
 import time
 import uuid
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from server.curriculum import CurriculumSampler
 from server.guards import GuardSuite
+from models import ReviewAction, ReviewObservation, ReviewState
 
-from models import TriageAction, TriageObservation, TriageState
 
-def grade_easy(action: dict, truth: dict) -> float:
-    classification = (action.get("classification") or "").lower().strip()
-    true_label = (truth.get("true_label") or "").lower().strip()
-    if not classification:
-        return 0.001
-    return 0.999 if classification == true_label else 0.001
+# ---------------------------------------------------------------------------
+# Grader helpers
+# ---------------------------------------------------------------------------
 
-def grade_medium(action: dict, truth: dict) -> float:
-    classification = (action.get("classification") or "").lower().strip()
-    true_label = (truth.get("true_label") or "").lower().strip()
-    bug_line = action.get("bug_line")
-    true_bug_line = truth.get("true_bug_line")
+def _normalize(score: float) -> float:
+    """Clamp and normalize a raw [0, 1] score to the strict (0.001, 0.999) range."""
+    return min(max(round(score, 3), 0.001), 0.999)
 
+
+# ---------------------------------------------------------------------------
+# Task 1 — PR Safety Gate (Easy)
+# Two independent components: review_decision (0.55) + blocker_type (0.45)
+# Prevents always-request_changes exploit: wrong blocker_type on clean PRs = -0.45
+# ---------------------------------------------------------------------------
+
+def grade_easy(action: dict, truth: dict) -> Tuple[float, dict]:
+    decision = (action.get("review_decision") or "").lower().strip()
+    blocker = (action.get("blocker_type") or "").lower().strip() or None
+    true_decision = (truth.get("true_decision") or "").lower().strip()
+    true_blocker = truth.get("true_blocker_type")
+
+    breakdown = {"review_decision": 0.0, "blocker_type": 0.0}
     score = 0.0
-    if classification == true_label:
-        score += 0.40
 
-    if true_bug_line is not None and bug_line is not None:
+    if decision == true_decision:
+        score += 0.55
+        breakdown["review_decision"] = 0.55
+
+    # blocker_type must be null for clean PRs and correct string for flagged ones
+    if true_blocker is None:
+        # Clean PR — blocker_type must be null/empty
+        if not blocker:
+            score += 0.45
+            breakdown["blocker_type"] = 0.45
+    else:
+        # Flagged PR — blocker_type must match exactly
+        if blocker == true_blocker.lower():
+            score += 0.45
+            breakdown["blocker_type"] = 0.45
+
+    return _normalize(score), breakdown
+
+
+# ---------------------------------------------------------------------------
+# Task 2 — Regression Localization (Medium)
+# Static defect analysis: agent reads proposed_code only.
+# Components: review_decision (0.10) + defect_category (0.40) + faulty_line (0.35 / 0.15 proximity)
+# ---------------------------------------------------------------------------
+
+def grade_medium(action: dict, truth: dict) -> Tuple[float, dict]:
+    decision = (action.get("review_decision") or "").lower().strip()
+    category = (action.get("defect_category") or "").lower().strip()
+    faulty_line = action.get("faulty_line")
+    true_category = (truth.get("true_defect_category") or "").lower().strip()
+    true_line = truth.get("true_faulty_line")
+
+    breakdown = {"review_decision": 0.0, "defect_category": 0.0, "faulty_line": 0.0}
+    score = 0.0
+
+    # All medium PRs are flawed — must be request_changes
+    if decision == "request_changes":
+        score += 0.10
+        breakdown["review_decision"] = 0.10
+
+    if category == true_category:
+        score += 0.40
+        breakdown["defect_category"] = 0.40
+
+    if true_line is not None and faulty_line is not None:
         try:
-            bug_line_int = int(bug_line)
-            if bug_line_int == true_bug_line:
-                score += 0.40
-            elif abs(bug_line_int - true_bug_line) == 1:
-                score += 0.20  # proximity bonus
+            line_int = int(faulty_line)
+            if line_int == true_line:
+                score += 0.35
+                breakdown["faulty_line"] = 0.35
+            elif abs(line_int - true_line) == 1:
+                score += 0.15
+                breakdown["faulty_line"] = 0.15
         except (TypeError, ValueError):
             pass
 
-    return min(max(round(score, 3), 0.001), 0.999)
+    return _normalize(score), breakdown
 
-def grade_hard(action: dict, truth: dict) -> float:
-    classification = (action.get("classification") or "").lower().strip()
-    true_label = (truth.get("true_label") or "").lower().strip()
-    bug_line = action.get("bug_line")
-    true_bug_line = truth.get("true_bug_line")
-    team = (action.get("team") or "").lower().strip()
-    true_team = (truth.get("true_team") or "").lower().strip()
-    suggested_fix = (action.get("suggested_fix") or "").lower().strip()
+
+# ---------------------------------------------------------------------------
+# Task 3 — Full Audit & Integration Review (Hard)
+# Integration defect analysis: agent reads proposed_code + context_snippet.
+# Components: review_decision (0.05) + defect_category (0.20) +
+#             faulty_line (0.25 / 0.10 proximity) + reviewer_team (0.25) +
+#             suggested_change (0.25, keyword-scored, anti-stuffing guard)
+# ---------------------------------------------------------------------------
+
+def grade_hard(action: dict, truth: dict) -> Tuple[float, dict]:
+    decision = (action.get("review_decision") or "").lower().strip()
+    category = (action.get("defect_category") or "").lower().strip()
+    faulty_line = action.get("faulty_line")
+    team = (action.get("reviewer_team") or "").lower().strip()
+    suggested = (action.get("suggested_change") or "").lower().strip()
+    true_category = (truth.get("true_defect_category") or "").lower().strip()
+    true_line = truth.get("true_faulty_line")
+    true_team = (truth.get("true_reviewer_team") or "").lower().strip()
     fix_keywords = [k.lower() for k in truth.get("true_fix_keywords", [])]
 
+    breakdown = {
+        "review_decision": 0.0,
+        "defect_category": 0.0,
+        "faulty_line": 0.0,
+        "reviewer_team": 0.0,
+        "suggested_change": 0.0,
+    }
     score = 0.0
 
-    if classification == true_label:
-        score += 0.25
+    # All hard PRs are flawed — must be request_changes
+    if decision == "request_changes":
+        score += 0.05
+        breakdown["review_decision"] = 0.05
 
-    if true_bug_line is not None and bug_line is not None:
+    if category == true_category:
+        score += 0.20
+        breakdown["defect_category"] = 0.20
+
+    if true_line is not None and faulty_line is not None:
         try:
-            bug_line_int = int(bug_line)
-            if bug_line_int == true_bug_line:
+            line_int = int(faulty_line)
+            if line_int == true_line:
                 score += 0.25
-            elif abs(bug_line_int - true_bug_line) == 1:
+                breakdown["faulty_line"] = 0.25
+            elif abs(line_int - true_line) == 1:
                 score += 0.10
+                breakdown["faulty_line"] = 0.10
         except (TypeError, ValueError):
             pass
 
     if team == true_team:
         score += 0.25
+        breakdown["reviewer_team"] = 0.25
 
-    if suggested_fix:
-        if fix_keywords:
-            matched = sum(1 for kw in fix_keywords if kw in suggested_fix)
+    # Anti-reward-hacking: suggested_change >200 chars → 0.0 (no keyword stuffing)
+    if suggested:
+        if len(suggested) > 200:
+            fix_score = 0.0
+        elif fix_keywords:
+            matched = sum(1 for kw in fix_keywords if kw in suggested)
             if matched >= 2:
-                score += 0.25
+                fix_score = 0.25
             elif matched == 1:
-                score += 0.15
+                fix_score = 0.15
             else:
-                score += 0.05  # effort credit only
+                fix_score = 0.05  # effort credit
         else:
-            score += 0.05
+            fix_score = 0.05
+        score += fix_score
+        breakdown["suggested_change"] = fix_score
 
-    return min(max(round(score, 3), 0.001), 0.999)
+    return _normalize(score), breakdown
 
-def grade(action: dict, truth: dict) -> float:
+
+def grade(action: dict, truth: dict) -> Tuple[float, dict]:
     level = truth.get("task_level", "easy")
     if level == "easy":
         return grade_easy(action, truth)
@@ -90,105 +174,88 @@ def grade(action: dict, truth: dict) -> float:
         return grade_hard(action, truth)
     raise ValueError(f"Unknown task_level: {level}")
 
-class DevTriageEnvironment:
+
+# ---------------------------------------------------------------------------
+# Environment
+# ---------------------------------------------------------------------------
+
+class PRRegressionAuditEnvironment:
     def __init__(self):
-        with open("data/issues.json", "r") as f:
-            self.all_issues = json.load(f)
+        with open("data/prs.json", "r") as f:
+            self.all_prs = json.load(f)
 
-        # Group issues by difficulty level for the curriculum sampler
-        self._issues_by_level: Dict[str, List[dict]] = {"easy": [], "medium": [], "hard": []}
-        for issue in self.all_issues:
-            lvl = issue.get("task_level", "easy")
-            if lvl in self._issues_by_level:
-                self._issues_by_level[lvl].append(issue)
+        # Group PRs by difficulty for curriculum sampler
+        self._prs_by_level: Dict[str, List[dict]] = {"easy": [], "medium": [], "hard": []}
+        for pr in self.all_prs:
+            lvl = pr.get("task_level", "easy")
+            if lvl in self._prs_by_level:
+                self._prs_by_level[lvl].append(pr)
 
-        # Curriculum sampler replaces random sampling
-        self._curriculum = CurriculumSampler(self._issues_by_level, history_window=10)
+        self._curriculum = CurriculumSampler(self._prs_by_level, history_window=10)
 
-        # Anti-reward-hacking guard suite
+        # Anti-reward-hacking guard suite (ported from GitHub)
         self._guards = GuardSuite()
 
         self._reset_state()
 
     def _reset_state(self):
-        self._step_start: float = time.perf_counter()
         self.episode_id = str(uuid.uuid4())
         self.step_count = 0
         self._current = self._curriculum.sample()
+        self._step_start: float = time.perf_counter()
 
-    def reset(self) -> TriageObservation:
+    def reset(self) -> ReviewObservation:
         self._reset_state()
-        self._step_start = time.perf_counter()  # start timing when agent receives observation
-        return TriageObservation(
-            issue_id=self._current["id"],
-            title=self._current["title"],
-            body=self._current["body"],
-            code_snippet=self._current["code_snippet"],
-            existing_labels=self._current["labels"],
-            task_level=self._current["task_level"],
-            done=False,
-            reward=None
-        )
+        self._step_start = time.perf_counter()  # start timing when agent receives obs
+        return self._build_observation(done=False, reward=None, breakdown=None)
 
-    def step(self, action: TriageAction) -> TriageObservation:
+    def step(self, action: ReviewAction) -> ReviewObservation:
         self.step_count += 1
         elapsed_ms = (time.perf_counter() - self._step_start) * 1000.0
-        raw_reward = grade(action.model_dump(), self._current)
+        raw_reward, breakdown = grade(action.model_dump(), self._current)
+        # Apply anti-reward-hacking guards (multiplicative penalties)
         reward, _guard_results = self._guards.evaluate(
             action.model_dump(), self._current, raw_reward, elapsed_ms
         )
-        # Record performance for curriculum phase tracking
         self._curriculum.record(self._current["task_level"], reward)
-        return TriageObservation(
-            issue_id=self._current["id"],
+        return self._build_observation(done=True, reward=reward, breakdown=breakdown)
+
+    def _build_observation(
+        self,
+        done: bool,
+        reward: Any,
+        breakdown: Any,
+    ) -> ReviewObservation:
+        return ReviewObservation(
+            pr_id=self._current["id"],
             title=self._current["title"],
-            body=self._current["body"],
-            code_snippet=self._current["code_snippet"],
-            existing_labels=self._current["labels"],
+            description=self._current["description"],
+            proposed_code=self._current.get("proposed_code"),
+            context_snippet=self._current.get("context_snippet"),
+            labels=self._current.get("labels", []),
             task_level=self._current["task_level"],
-            done=True,
-            reward=reward
+            done=done,
+            reward=reward,
+            reward_breakdown=breakdown,
         )
 
     @property
-    def state(self) -> TriageState:
-        return TriageState(
+    def state(self) -> ReviewState:
+        return ReviewState(
             episode_id=self.episode_id,
             step_count=self.step_count,
             task_level=self._current["task_level"],
-            current_issue_id=self._current["id"]
+            current_pr_id=self._current["id"],
         )
 
     def get_curriculum_stats(self) -> dict:
-        """Returns current curriculum progression statistics.
-
-        Used by the /curriculum FastAPI endpoint and for monitoring
-        agent improvement during RL training. Returns the curriculum
-        sampler's full state including current phase, phase weights,
-        recent performance by level, and transition history.
-
-        Returns:
-            dict with keys: current_phase, episode, phase_weights,
-            phase_transitions, recent_performance, history_window,
-            total_episodes_recorded, issue_pool_size
-        """
+        """Returns live curriculum progression stats. Used by /curriculum endpoint."""
         return self._curriculum.get_stats()
 
     def get_recent_audit(self, n: int = 20) -> list:
-        """Returns the last n episode records from the curriculum history.
-
-        Used by the /audit FastAPI endpoint for reward-hacking detection.
-        Each entry contains level, reward, and episode number.
-
-        Args:
-            n: Number of recent entries to return (default 20, max 50)
-
-        Returns:
-            List of dicts with keys: level, reward, episode
-        """
+        """Returns the last n episode records for reward-hacking detection."""
         n = min(n, 50)
-        history = list(self._curriculum._history)
-        return history[-n:]
+        return list(self._curriculum._history)[-n:]
 
     def get_guard_summary(self) -> dict:
         """Returns anti-reward-hacking guard statistics.
@@ -196,10 +263,6 @@ class DevTriageEnvironment:
         Exposes the GuardSuite's summary including total penalties applied,
         penalty rate, fast response rate, and descriptions of each guard.
         Used by the /guards FastAPI endpoint.
-
-        Returns:
-            dict with keys: total_episodes, total_penalties_applied,
-            penalty_rate, fast_response_rate, guards
         """
         return self._guards.get_summary()
 
@@ -208,11 +271,9 @@ class DevTriageEnvironment:
 
         Each entry contains episode number, original vs adjusted reward,
         penalty multiplier, and which guards triggered and why.
+        Used by the /guards/audit FastAPI endpoint.
 
         Args:
             n: Number of recent entries to return (default 20)
-
-        Returns:
-            List of guard audit dicts
         """
         return self._guards.get_audit_log(n)
