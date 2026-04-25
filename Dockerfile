@@ -21,6 +21,8 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 COPY . .
 
 # HF Spaces uses port 7860
+
+#
 EXPOSE 7860
 
 # Start server - Important: point to prevaluation_env
