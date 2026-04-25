@@ -181,8 +181,12 @@ def grade(action: dict, truth: dict) -> Tuple[float, dict]:
 
 class PRRegressionAuditEnvironment:
     def __init__(self):
-        with open("data/prs.json", "r") as f:
-            self.all_prs = json.load(f)
+        try:
+            with open("data/prs.json", "r") as f:
+                self.all_prs = json.load(f)
+        except FileNotFoundError:
+            print("Warning: data/prs.json not found. Environment will have no PRs.")
+            self.all_prs = []
 
         # Group PRs by difficulty for curriculum sampler
         self._prs_by_level: Dict[str, List[dict]] = {"easy": [], "medium": [], "hard": []}
