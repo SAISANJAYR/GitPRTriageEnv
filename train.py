@@ -50,13 +50,13 @@ def parse_action(raw) -> dict:
 def score_action(action: dict, truth: dict) -> float:
     level = truth["task_level"]
     score = 0.0
-    decision = (action.get("review_decision") or "").lower()
+    decision = str(action.get("review_decision") or "").lower()
     true_decision = truth["true_decision"]
 
     if level == "easy":
         if decision == true_decision:
             score += 0.55
-        blocker = (action.get("blocker_type") or "").lower().strip()
+        blocker = str(action.get("blocker_type") or "").lower().strip()
         true_blocker = truth.get("true_blocker_type")
         if true_blocker is None:
             if not blocker:
@@ -67,7 +67,7 @@ def score_action(action: dict, truth: dict) -> float:
     elif level == "medium":
         if decision == "request_changes":
             score += 0.10
-        cat = (action.get("defect_category") or "").lower()
+        cat = str(action.get("defect_category") or "").lower()
         true_cat = (truth.get("true_defect_category") or "").lower()
         if cat == true_cat:
             score += 0.40
@@ -83,7 +83,7 @@ def score_action(action: dict, truth: dict) -> float:
     elif level == "hard":
         if decision == "request_changes":
             score += 0.05
-        cat = (action.get("defect_category") or "").lower()
+        cat = str(action.get("defect_category") or "").lower()
         if cat == (truth.get("true_defect_category") or "").lower():
             score += 0.20
         fl = action.get("faulty_line")
@@ -94,10 +94,10 @@ def score_action(action: dict, truth: dict) -> float:
                 if diff == 0: score += 0.25
                 elif diff == 1: score += 0.10
             except: pass
-        team = (action.get("reviewer_team") or "").lower()
+        team = str(action.get("reviewer_team") or "").lower()
         if team == (truth.get("true_reviewer_team") or "").lower():
             score += 0.25
-        suggestion = (action.get("suggested_change") or "").lower()
+        suggestion = str(action.get("suggested_change") or "").lower()
         keywords = [k.lower() for k in truth.get("true_fix_keywords", [])]
         if suggestion and keywords:
             matched = sum(1 for k in keywords if k in suggestion)
