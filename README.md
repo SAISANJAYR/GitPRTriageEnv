@@ -224,6 +224,27 @@ Trigger: easy avg ≥ 0.80    Trigger: medium avg ≥ 0.65  (terminal phase)
 
 ---
 
+## Features
+
+- **RLVR (Reinforcement Learning with Verifiable Rewards)**: Fully programmatic grading with zero LLM judges ensures completely verifiable rewards and stops persuasion-based reward hacking.
+- **Fast vs Live Training Modes**: The `train_v2.py` script lets you choose your speed. `--mode fast` runs full offline grading for maximum GPU utilisation. `--mode live` evaluates the same offline grading but additionally sends telemetry to the stateless Hugging Face API (`/grade_stateless`) so the live dashboard instantly updates!
+- **Curriculum Learning**: Progresses the agent dynamically from `easy` Safety Gate tasks to `hard` Integration reviews.
+- **Multi-layered Anti-Reward Hacking**: 
+  - **Offline (Training)**: The `train_v2.py` script applies strict `diversity` and `contradiction` penalties inline to steer the RL mathematically.
+  - **Online (Inference/API)**: The central server applies a separate `GuardSuite` that catches runtime exploits like `KeywordStuffing` or `TimingGuard` cache exploits.
+
+---
+
+## Important Flags
+
+| Flag | Script | Options | Description |
+|------|--------|---------|-------------|
+| `--mode` | `train_v2.py` | `fast`, `live` | Toggles telemetry. `fast` is strictly local offline grading. `live` sends API telemetry every 3 steps to update the Hugging Face UI. |
+| `--mode` | `inference.py`| `single`, `multi`, `compare` | Determines evaluation architecture. `compare` runs the single-agent vs multi-agent side-by-side benchmark. |
+| `--episodes` | `inference.py` | `<int>` | Sets how many episodes to run. Default is 45. |
+
+---
+
 ## Quickstart
 
 **Prerequisites:** Python 3.11, Docker

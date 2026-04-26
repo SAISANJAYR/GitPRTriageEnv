@@ -260,6 +260,26 @@ class PRRegressionAuditEnvironment:
             current_pr_id=self._current["id"],
         )
 
+    def grade_stateless(self, pr_id: str, action: dict, elapsed_ms: float = 150.0) -> dict:
+        """Grades a specific PR action without affecting the main episode state.
+        Records the reward to the curriculum and guards telemetry.
+        """
+        truth = next((pr for pr in self.all_prs if pr["id"] == pr_id), None)
+        if not truth:
+            return {"error": f"PR {pr_id} not found"}
+            
+        raw_reward, breakdown = grade(action, truth)
+        reward, guard_results = self._guards.evaluate(
+            action, truth, raw_reward, elapsed_ms
+        )
+        self._curriculum.record(truth["task_level"], reward)
+        
+        return {
+            "reward": reward,
+            "breakdown": breakdown,
+            "guards": guard_results
+        }
+
     def get_curriculum_stats(self) -> dict:
         """Returns live curriculum progression stats. Used by /curriculum endpoint."""
         return self._curriculum.get_stats()

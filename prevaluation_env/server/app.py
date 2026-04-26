@@ -39,6 +39,22 @@ def reset():
     return env.reset().model_dump()
 
 
+from pydantic import BaseModel
+
+class StatelessGradeRequest(BaseModel):
+    pr_id: str
+    action: dict
+    elapsed_ms: float = 150.0
+
+@app.post("/grade_stateless")
+def grade_stateless(req: StatelessGradeRequest):
+    result = env.grade_stateless(req.pr_id, req.action, req.elapsed_ms)
+    if "error" in result:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
 @app.post("/step")
 def step(action: ReviewAction):
     return env.step(action).model_dump()

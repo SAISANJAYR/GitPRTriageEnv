@@ -23,7 +23,7 @@ train_v2.py — Stage 2 GRPO (Curriculum) training.
   • Post-training stats written to evaluation/post_training/trained_summary.json
 """
 
-import os, json, re, collections, requests
+import os, json, re, collections, requests, argparse
 import numpy as np
 from datasets import load_dataset, concatenate_datasets
 from unsloth import FastLanguageModel
@@ -172,8 +172,15 @@ def _format_quality_bonus(raw_text: str) -> float:
     return 0.0
 
 # ── Reward functions ──────────────────────────────────────────────────────────
+ENV_URL = "https://rsd-06-prregressionauditenv.hf.space/grade_stateless"
+GLOBAL_STEP_COUNTER = 0
+TRAIN_MODE = "fast"
+
 def env_reward(completions, pr_id, **kwargs) -> list:
+    global GLOBAL_STEP_COUNTER
     rewards = []
+    live_payload = None
+
     for comp, pid in zip(completions, pr_id):
         try:
             raw    = comp[0]["content"] if isinstance(comp, list) and isinstance(comp[0], dict) else str(comp)
@@ -186,9 +193,26 @@ def env_reward(completions, pr_id, **kwargs) -> list:
             div_pen  = _diversity_penalty(action)
             cont_pen = _contradiction_penalty(action)
             fmt_bon  = _format_quality_bonus(raw)
-            rewards.append(float(np.clip(base + div_pen + cont_pen + fmt_bon, 0.001, 0.999)))
+            final_reward = float(np.clip(base + div_pen + cont_pen + fmt_bon, 0.001, 0.999))
+            rewards.append(final_reward)
+            
+            if live_payload is None and TRAIN_MODE == "live":
+                live_payload = {
+                    "pr_id": str(pid),
+                    "action": action,
+                    "elapsed_ms": 150.0
+                }
         except Exception:
             rewards.append(0.001)
+            
+    if live_payload is not None:
+        GLOBAL_STEP_COUNTER += 1
+        if GLOBAL_STEP_COUNTER % 3 == 0:
+            try:
+                requests.post(ENV_URL, json=live_payload, timeout=2)
+            except Exception:
+                pass
+                
     return rewards
 
 def format_reward(completions, **kwargs) -> list:
@@ -332,4 +356,16 @@ def main():
     print("Done!")
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", type=str, choices=["fast", "live"], default="fast",
+                        help="fast: local scoring only (fast). live: sends telemetry to API every 3 steps (updates UI).")
+    args = parser.parse_args()
+    
+    TRAIN_MODE = args.mode
+    
+    if TRAIN_MODE == "live":
+        print("\n🚀 Starting in LIVE mode. Telemetry will be sent to HF Space.")
+    else:
+        print("\n⚡ Starting in FAST mode. No telemetry will be sent.")
+        
     main()
