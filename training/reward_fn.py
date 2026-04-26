@@ -69,11 +69,10 @@ def compute_format_reward(completions: list[str], **kwargs) -> list[float]:
             else:
                 data = json.loads(comp)
                 
-            # Reward exclusively hinges upon parsing as a Dict with at least a valid review decision 
             if isinstance(data, dict):
                 decision = data.get("review_decision")
                 if decision in ("approve", "request_changes"):
-                    rewards.append(0.5)
+                    rewards.append(0.1)
                 else:
                     rewards.append(0.0)
             else:
@@ -94,8 +93,7 @@ def compute_reward(completions: list[str], pr_ids: list[str], **kwargs) -> list[
     final_rewards = []
     # Both pipelines must output synchronized dimensional lengths 
     for env, fmt in zip(env_rewards, fmt_rewards):
-        # Env (1.0 max) + format (0.5 max) could mathematically hit 1.5. Cap strictly to 1.0.
-        capped = min(1.0, env + fmt)
-        final_rewards.append(capped)
+        # Format reward acts as a small shaping bonus. We do not artificially cap at 1.0 to ensure the gradient for environment task mastery is perfectly preserved.
+        final_rewards.append(env + fmt)
         
     return final_rewards

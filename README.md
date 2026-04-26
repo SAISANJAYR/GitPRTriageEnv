@@ -13,7 +13,9 @@ tags:
   - reinforcement-learning
 ---
 
-# PRRegressionAudit Env 🔍
+# PRRegressionAudit RLEnvironment and Self-Improving Multi-Agent Code Reviewer 🔍
+
+**Created by Team GitHappens! (R Sudharshan & Sai Sanjay R)**
 
 ![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688?logo=fastapi&logoColor=white)
@@ -44,20 +46,45 @@ Our RL agent was progressively trained using **GRPO (Group Relative Policy Optim
 
 ### Stage 0: Baseline (Untrained Qwen2.5-1.5B-Instruct)
 The base instruction-tuned model. While it understands code, it completely lacks the domain-specific rigor to consistently identify the exact faulty lines, match the strict keyword constraints, and perfectly format the complex JSON output required by the environment's deterministic grader.
+- **Easy Avg:** 0.3597
+- **Medium Avg:** 0.1733
+- **Hard Avg:** 0.1824
 
 ### Stage 1: GRPO Trained (V1)
-Trained for 400 steps on the raw PR dataset. The model successfully learned the required JSON schema and improved its basic classification abilities, particularly on the 'Easy' safety gate tasks. However, it struggled with class imbalance and the complex reasoning required for 'Hard' tasks.
-- **Easy Avg:** 0.890
-- **Medium Avg:** 0.612
-- **Hard Avg:** 0.421
+Trained for 200 steps on an L4 GPU without Curriculum Learning. The model attempted to learn the required JSON schema but suffered from format hallucinations and struggled massively with class imbalance, leading to a degradation in performance compared to random guessing baseline.
+- **Easy Avg:** 0.3098
+- **Medium Avg:** 0.0382
+- **Hard Avg:** 0.0181
 
 ### Stage 2: Curriculum & Reward Hacking Guardrails (V2)
-Resumed from the V1 adapter and trained for an additional 600 steps using advanced RL strategies:
-1. **Curriculum Learning:** Oversampled easy tasks initially to build the model's confidence, then smoothly transitioned to harder integration bugs.
-2. **Reward Hacking Guardrails:** Implemented strict penalties for diversity collapse (always guessing 'approve') and semantic contradictions (approving a PR while simultaneously flagging a blocker).
-- **Easy Avg:** 0.985 *(Fake Data - Training in progress)*
-- **Medium Avg:** 0.842 *(Fake Data - Training in progress)*
-- **Hard Avg:** 0.710 *(Fake Data - Training in progress)*
+Trained for 400 steps on an A10G/A100 GPU using advanced RL strategies:
+1. **Curriculum Learning:** Managed difficulty progression across three phases (Bootstrap, Intermediate, Advanced) using a rolling performance window.
+2. **Reward Hacking Guardrails:** Implemented strict penalties for diversity collapse and semantic contradictions via the `GuardSuite`.
+- **Easy Avg:** 0.6872
+- **Medium Avg:** 0.5300
+- **Hard Avg:** 0.4175
+
+### Training Logs & Performance Dashboards
+
+![Absolute Grading Scores](assets/grading_scores.png)
+*Figure 1: Absolute grading score improvement across the 3 stages.*
+
+![Hugging Face Space Evaluation](assets/hf_dashboard.png)
+*Figure 2: The live Hugging Face Space showing percentage improvement over Baseline.*
+
+![WandB Full Dashboard](assets/wandb_dashboard.png)
+*Figure 3: Full Weights & Biases dashboard during V2 GRPO Curriculum Training.*
+
+<details>
+<summary>Click to see individual Metric Plots</summary>
+
+![Training Reward Curve](assets/train_reward.png)
+*V2 Training Reward progressively increasing as the curriculum advances.*
+
+![Training Loss Curve](assets/train_loss.png)
+*V2 Training Loss converging.*
+
+</details>
 
 ---
 

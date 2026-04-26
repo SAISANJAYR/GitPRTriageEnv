@@ -1,0 +1,24 @@
+{
+  "overall": {
+    "mean": 0.5449,
+    "std": 0.1111,
+    "count": 60
+  },
+  "by_difficulty": {
+    "easy": {
+      "mean": 0.6872,
+      "std": 0.1234,
+      "count": 20
+    },
+    "medium": {
+      "mean": 0.5300,
+      "std": 0.0876,
+      "count": 20
+    },
+    "hard": {
+      "mean": 0.4175,
+      "std": 0.0543,
+      "count": 20
+    }
+  }
+}

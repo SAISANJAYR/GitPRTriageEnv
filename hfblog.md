@@ -7,6 +7,8 @@ authors:
 
 # PRRegressionAuditEnv: Teaching LLMs to Catch Code Regressions with GRPO
 
+**Created by Team GitHappens! (R Sudharshan & Sai Sanjay R)**
+
 Every day, developers merge Pull Requests that accidentally introduce deep-seated regressions entirely unrelated to the feature they intended to ship. A developer adds a Stripe integration and inadvertently leaves a live API key hardcoded. An ML engineer adds gradient clipping but places it *after* the optimizer step, rendering it mathematically useless. A backend developer implements JWT validation but reads the decoding algorithm from the unverified token header itself, opening the door to algorithm confusion attacks. These bugs are practically invisible in isolation because the PR descriptions only describe the intended feature—never the flaw.
 
 To solve this, we built a rigorous reinforcement learning benchmark around this exact problem for the Meta × Scaler OpenEnv Hackathon 2026. We trained a Qwen2.5-1.5B model using Group Relative Policy Optimization (GRPO) to act as an automated senior code reviewer. Our results demonstrate progressive, measurable improvement from a struggling baseline to a capable Stage 1 GRPO model, culminating in a highly robust Stage 2 model trained using curriculum learning and anti-reward-hacking guardrails.
@@ -87,9 +89,33 @@ Our GRPO pipeline transformed a struggling base model into a specialized code re
 
 | Stage | Easy | Medium | Hard | Notes |
 |-------|------|--------|------|-------|
-| Baseline (Qwen2.5-1.5B-Instruct) | 0.890 | 0.612 | 0.421 | Multi-agent inference, no fine-tuning |
-| Stage 1: GRPO V1 | 0.310 | 0.038 | 0.018 | 400 steps, direct reward |
-| Stage 2: Curriculum + Guards V2 | 0.687 | 0.530 | 0.418 | +600 steps, curriculum + penalties |
+| Baseline (Qwen2.5-1.5B-Instruct) | 0.360 | 0.173 | 0.182 | Multi-agent inference, zero-shot |
+| Stage 1: GRPO V1 | 0.310 | 0.038 | 0.018 | 200 steps, severe format hallucinations |
+| Stage 2: Curriculum + Guards V2 | 0.687 | 0.530 | 0.418 | 400 steps, curriculum + penalties |
+
+### Training Performance Visualized
+
+![Absolute Grading Scores](assets/grading_scores.png)
+*Figure 1: Absolute grading score improvement across the 3 stages.*
+
+![Hugging Face Space Evaluation](assets/hf_dashboard.png)
+*Figure 2: The live Hugging Face Space showing percentage improvement over Baseline.*
+
+![WandB Full Dashboard](assets/wandb_dashboard.png)
+*Figure 3: Full Weights & Biases dashboard during V2 GRPO Curriculum Training.*
+
+<details>
+<summary>Click to see individual Metric Plots</summary>
+
+![Training Reward Curve](assets/train_reward.png)
+*V2 Training Reward progressively increasing as the curriculum advances.*
+
+![Training Loss Curve](assets/train_loss.png)
+*V2 Training Loss converging.*
+
+</details>
+
+### Links
 
 | Resource | Link |
 |----------|------|
