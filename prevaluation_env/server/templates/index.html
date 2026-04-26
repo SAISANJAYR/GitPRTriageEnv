@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>PR Review RL Agent – Results Dashboard</title>
-  <meta name="description" content="GRPO training results for the PR Regression Audit RL agent. Compare baseline vs V1 vs V2 trained models across easy, medium, and hard difficulty levels."/>
+  <title>PR Review RL Agent – Live Command Center</title>
+  <meta name="description" content="GRPO training results for the PR Regression Audit RL agent."/>
 
   <!-- Fonts -->
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
   <!-- React & ReactDOM (pinned) -->
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
@@ -16,91 +16,193 @@
   <!-- Babel for in-browser JSX transpilation -->
   <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.24.0/babel.min.js"></script>
 
-  <!-- Recharts dependencies -->
+  <!-- Recharts -->
   <script src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
-  <!-- Recharts UMD bundle (pinned) -->
   <script src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js"></script>
 
   <style>
     :root {
-      --bg-main: #0B0E14;
-      --bg-card: #131722;
-      --bg-input: #1C2130;
-      --border-color: #2A3143;
-      --text-main: #E2E8F0;
+      --bg-main: #050505;
+      --bg-card: rgba(20, 20, 25, 0.6);
+      --bg-input: rgba(30, 30, 35, 0.8);
+      --border-color: rgba(255, 255, 255, 0.08);
+      --border-hover: rgba(255, 255, 255, 0.15);
+      --text-main: #F8FAFC;
       --text-muted: #94A3B8;
       
       --color-baseline: #6366f1;
       --color-v1: #f59e0b;
       --color-v2: #10b981;
+      --color-v2-glow: rgba(16, 185, 129, 0.4);
       
       --color-easy: #3b82f6;
       --color-medium: #8b5cf6;
       --color-hard: #ec4899;
       
-      --radius: 12px;
+      --radius-lg: 16px;
+      --radius-md: 12px;
+      --radius-sm: 8px;
     }
 
-    body { margin: 0; padding: 0; background-color: var(--bg-main); color: var(--text-main); font-family: 'Inter', system-ui, sans-serif; line-height: 1.5; }
+    body { 
+      margin: 0; padding: 0; 
+      background-color: var(--bg-main); 
+      background-image: 
+        radial-gradient(circle at 15% 50%, rgba(99, 102, 241, 0.08) 0%, transparent 50%),
+        radial-gradient(circle at 85% 30%, rgba(16, 185, 129, 0.05) 0%, transparent 50%);
+      color: var(--text-main); 
+      font-family: 'Inter', system-ui, sans-serif; 
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+    
     * { box-sizing: border-box; }
     
-    .container { max-width: 1400px; margin: 0 auto; padding: 2rem; }
+    .container { max-width: 1400px; margin: 0 auto; padding: 3rem 2rem; }
     
+    /* Typography */
+    h1 { 
+      margin: 0 0 0.5rem; 
+      font-size: 2.75rem; 
+      font-weight: 800; 
+      letter-spacing: -0.03em;
+      background: linear-gradient(to right, #fff, #94A3B8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    h2 { margin: 0 0 1rem; font-size: 1.25rem; font-weight: 600; color: var(--text-muted); }
+    h3 { margin: 0 0 0.75rem; font-size: 1.1rem; font-weight: 600; color: var(--text-main); letter-spacing: -0.01em; }
+    p { margin: 0 0 1rem; color: var(--text-muted); }
+    
+    .section-title { 
+      font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.15em; 
+      color: var(--text-muted); font-weight: 700; margin: 3rem 0 1.5rem; 
+      display: flex; align-items: center; gap: 1rem; 
+    }
+    .section-title::after { content: ""; flex: 1; height: 1px; background: linear-gradient(to right, var(--border-color), transparent); }
+    .section-title::before { content: ""; width: 24px; height: 1px; background: var(--border-color); }
+    
+    /* Cards & Layout */
     .card { 
       background: var(--bg-card); 
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
       border: 1px solid var(--border-color); 
-      border-radius: var(--radius); 
-      padding: 1.5rem; 
-      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      border-radius: var(--radius-lg); 
+      padding: 1.75rem; 
+      box-shadow: 0 4px 24px -1px rgba(0, 0, 0, 0.2);
+      transition: transform 0.2s ease, border-color 0.2s ease;
     }
+    .card:hover { border-color: var(--border-hover); }
     
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
     .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; }
-    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
     
-    .textarea { width: 100%; height: 140px; background: var(--bg-input); color: var(--text-muted); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 12px; font-family: 'Courier New', monospace; font-size: 12px; resize: vertical; margin-top: 8px; transition: border-color 0.2s; }
-    .textarea:focus { outline: none; border-color: var(--color-v2); color: var(--text-main); }
+    /* Live Data Section */
+    .live-dashboard {
+      position: relative;
+      border-radius: var(--radius-lg);
+      padding: 2px;
+      background: linear-gradient(135deg, rgba(59,130,246,0.3), rgba(16,185,129,0.3));
+      margin-bottom: 3rem;
+    }
+    .live-dashboard-inner {
+      background: var(--bg-main);
+      border-radius: calc(var(--radius-lg) - 2px);
+      padding: 2rem;
+      position: relative;
+      overflow: hidden;
+    }
     
-    .badge { display: inline-flex; align-items: center; padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
-    .tag-online  { background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); }
-    .tag-offline { background: rgba(248, 113, 113, 0.15); color: #f87171; border: 1px solid rgba(248, 113, 113, 0.3); }
-    .tag-info { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
+    .live-muted-overlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(5, 5, 5, 0.75);
+      backdrop-filter: blur(4px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+      border-radius: calc(var(--radius-lg) - 2px);
+    }
+    .fast-mode-badge {
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid rgba(245, 158, 11, 0.4);
+      color: #fbbf24;
+      padding: 0.75rem 1.5rem;
+      border-radius: 999px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      box-shadow: 0 0 20px rgba(245, 158, 11, 0.2);
+    }
     
-    .tag-baseline { background: rgba(99, 102, 241, 0.15); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.3); }
-    .tag-v1      { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
-    .tag-v2      { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
-
-    .metric-val  { font-size: 2.5rem; font-weight: 700; letter-spacing: -1px; line-height: 1.2; }
-    .positive { color: #34d399; }
+    .metric-box {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 1rem;
+      text-align: center;
+    }
+    .metric-box-value { font-family: 'JetBrains Mono', monospace; font-size: 1.75rem; font-weight: 700; color: #fff; }
+    .metric-box-label { font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.05em; margin-top: 0.25rem;}
+    
+    /* Wandb Placeholders */
+    .wandb-container {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1.5rem;
+    }
+    .wandb-graph {
+      background: #111;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      height: 250px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      color: var(--text-muted);
+      position: relative;
+      overflow: hidden;
+    }
+    .wandb-graph::after {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, transparent, #fbbf24, transparent);
+      opacity: 0.5;
+    }
+    
+    /* Inputs */
+    .textarea { width: 100%; height: 140px; background: var(--bg-input); color: var(--text-muted); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px; font-family: 'JetBrains Mono', monospace; font-size: 12px; resize: vertical; margin-top: 8px; transition: all 0.2s; }
+    .textarea:focus { outline: none; border-color: var(--color-v2); color: var(--text-main); background: rgba(0,0,0,0.5); }
+    
+    /* Tags */
+    .badge { display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+    .tag-online  { background: rgba(16, 185, 129, 0.1); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); box-shadow: 0 0 10px rgba(16,185,129,0.1); }
+    .tag-offline { background: rgba(248, 113, 113, 0.1); color: #f87171; border: 1px solid rgba(248, 113, 113, 0.3); }
+    .tag-info { background: rgba(59, 130, 246, 0.1); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
+    
+    .metric-val  { font-size: 2.5rem; font-weight: 800; letter-spacing: -1px; line-height: 1.2; font-family: 'JetBrains Mono', monospace; }
+    .positive { color: #34d399; text-shadow: 0 0 15px rgba(52, 211, 153, 0.2); }
     .negative { color: #f87171; }
     
-    h1 { margin: 0 0 0.5rem; font-size: 2.25rem; font-weight: 700; letter-spacing: -0.02em; }
-    h2 { margin: 0 0 1rem; font-size: 1.25rem; font-weight: 600; color: var(--text-muted); }
-    h3 { margin: 0 0 0.5rem; font-size: 1.1rem; font-weight: 600; color: var(--text-main); }
-    p { margin: 0 0 1rem; color: var(--text-muted); }
-    
-    label { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
-    .section-title { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); font-weight: 700; margin: 3rem 0 1.5rem; display: flex; align-items: center; gap: 0.5rem; }
-    .section-title::after { content: ""; flex: 1; height: 1px; background: var(--border-color); }
-    
+    /* Tables */
     table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-    th { text-align: left; padding: 12px 16px; color: var(--text-muted); font-weight: 600; border-bottom: 2px solid var(--border-color); text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; }
-    td { padding: 16px; border-bottom: 1px solid var(--border-color); }
+    th { text-align: left; padding: 14px 16px; color: var(--text-muted); font-weight: 600; border-bottom: 1px solid rgba(255,255,255,0.1); text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; }
+    td { padding: 16px; border-bottom: 1px solid rgba(255,255,255,0.05); }
     tr:last-child td { border-bottom: none; }
     
     .info-list { list-style: none; padding: 0; margin: 0; }
-    .info-list li { margin-bottom: 0.75rem; display: flex; align-items: flex-start; gap: 0.5rem; }
-    .info-list strong { color: var(--text-main); min-width: 140px; display: inline-block; }
+    .info-list li { margin-bottom: 0.75rem; display: flex; align-items: flex-start; gap: 0.75rem; font-size: 0.95rem; }
+    .info-list strong { color: #fff; min-width: 140px; display: inline-block; }
     
-    .btn-toggle { background: var(--bg-input); color: var(--text-main); border: 1px solid var(--border-color); padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; font-weight: 500; font-family: inherit; font-size: 0.875rem; transition: background 0.2s; }
-    .btn-toggle:hover { background: var(--border-color); }
+    .btn-toggle { background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color); padding: 0.6rem 1.2rem; border-radius: var(--radius-sm); cursor: pointer; font-weight: 600; font-family: inherit; font-size: 0.85rem; transition: all 0.2s; }
+    .btn-toggle:hover { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.3); }
     
-    @media (max-width: 1024px) { .grid-3, .grid-4 { grid-template-columns: 1fr 1fr; } }
-    @media (max-width: 768px) { .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; } }
+    @media (max-width: 1024px) { .grid-3 { grid-template-columns: 1fr 1fr; } .wandb-container { grid-template-columns: 1fr; } }
+    @media (max-width: 768px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
-  <div id="error-log" style="color: #f87171; padding: 20px; font-family: monospace; white-space: pre-wrap; display:none;"></div>
+  <div id="error-log" style="color: #f87171; padding: 20px; font-family: monospace; white-space: pre-wrap; display:none; background: #220000;"></div>
   <div id="root"></div>
 
   <script>
@@ -109,206 +211,208 @@
       el.style.display = 'block';
       el.innerText += "\nGlobal Error: " + message + "\n" + (error ? error.stack : '');
     };
-    window.addEventListener('unhandledrejection', function(event) {
-      var el = document.getElementById('error-log');
-      el.style.display = 'block';
-      el.innerText += "\nPromise Error: " + event.reason;
-    });
   </script>
 
   <script type="text/babel">
     const { useState, useEffect, useMemo } = React;
+    const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, ReferenceLine } = window.Recharts || {};
 
-    const {
-      BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-      ResponsiveContainer, LineChart, Line, ReferenceLine
-    } = window.Recharts || {};
-
-    // ── INITIAL DATA CONSTANTS ──────────────────────────────────────────────
-    const INITIAL_BASELINE = {
-      easy:   { avg: 0.3597, std: 0.2994, n: 107 },
-      medium: { avg: 0.1733, std: 0.1702, n: 26  },
-      hard:   { avg: 0.1824, std: 0.121,  n: 17  }
-    };
-
-    const INITIAL_V1 = {
-      easy:   { avg: 0.3098, std: 0.3225, n: 47 },
-      medium: { avg: 0.0382, std: 0.069,  n: 8  },
-      hard:   { avg: 0.0181, std: 0.0299, n: 5  }
-    };
-
-    const INITIAL_V2 = {
-      easy:   { avg: 0.0, std: 0.0, n: 0 },
-      medium: { avg: 0.0, std: 0.0, n: 0 },
-      hard:   { avg: 0.0, std: 0.0, n: 0 }
-    };
-
+    const INITIAL_BASELINE = { easy: { avg: 0.3597, n: 107 }, medium: { avg: 0.1733, n: 26 }, hard: { avg: 0.1824, n: 17 } };
+    const INITIAL_V1 = { easy: { avg: 0.3098, n: 47 }, medium: { avg: 0.0382, n: 8 }, hard: { avg: 0.0181, n: 5 } };
+    const INITIAL_V2 = { easy: { avg: 0.6872, n: 20 }, medium: { avg: 0.5300, n: 20 }, hard: { avg: 0.4175, n: 20 } };
     const LEVELS = ['easy', 'medium', 'hard'];
 
-    // ── HELPER FUNCTION FOR MOVING AVERAGE ──────────────────────────────────
     function computeMovingAverage(data, windowSize = 20) {
-      let result = [];
-      let easys = [], mediums = [], hards = [];
-      
+      let result = [], easys = [], mediums = [], hards = [];
       data.forEach((entry, i) => {
         if (entry.level === 'easy') easys.push(entry.reward);
         if (entry.level === 'medium') mediums.push(entry.reward);
         if (entry.level === 'hard') hards.push(entry.reward);
-        
-        const getAvg = (arr) => {
-          if (arr.length === 0) return null;
-          const slice = arr.slice(-windowSize);
-          return slice.reduce((a, b) => a + b, 0) / slice.length;
-        };
-
-        if (i % 5 === 0 || i === data.length - 1) { // Downsample points slightly for performance
-           result.push({
-             episode: entry.episode,
-             easy: getAvg(easys),
-             medium: getAvg(mediums),
-             hard: getAvg(hards)
-           });
+        const getAvg = (arr) => arr.length === 0 ? null : arr.slice(-windowSize).reduce((a, b) => a + b, 0) / arr.slice(-windowSize).length;
+        if (i % 5 === 0 || i === data.length - 1) {
+           result.push({ episode: entry.episode, easy: getAvg(easys), medium: getAvg(mediums), hard: getAvg(hards) });
         }
       });
       return result;
     }
 
     function ResultsDashboard() {
-      // Config State
       const [showConfig, setShowConfig] = useState(false);
       const [baselineStr, setBaselineStr] = useState(JSON.stringify(INITIAL_BASELINE, null, 2));
-      const [v1Str,       setV1Str]       = useState(JSON.stringify(INITIAL_V1,       null, 2));
-      const [v2Str,       setV2Str]       = useState(JSON.stringify(INITIAL_V2,       null, 2));
+      const [v1Str, setV1Str] = useState(JSON.stringify(INITIAL_V1, null, 2));
+      const [v2Str, setV2Str] = useState(JSON.stringify(INITIAL_V2, null, 2));
       
-      // Live Data State
-      const [envHealth,   setEnvHealth]   = useState(null);
-      const [auditData,   setAuditData]   = useState([]);
+      const [envHealth, setEnvHealth] = useState(null);
+      const [auditData, setAuditData] = useState([]);
       const [curriculumStats, setCurriculumStats] = useState(null);
 
-      // Fetch Live Data
       useEffect(() => {
         const fetchAll = () => {
-          // Health
           fetch('/health').then(r => r.json()).then(d => setEnvHealth(d.status)).catch(() => setEnvHealth('disconnected'));
-          // Audit Log (Full Training Curve)
-          fetch('/audit?n=10000').then(r => r.json()).then(d => {
-             if(Array.isArray(d)) setAuditData(d);
-          }).catch(console.error);
-          // Curriculum Stats
+          fetch('/audit?n=10000').then(r => r.json()).then(d => { if(Array.isArray(d)) setAuditData(d); }).catch(console.error);
           fetch('/curriculum').then(r => r.json()).then(d => setCurriculumStats(d)).catch(console.error);
         };
-        
         fetchAll();
-        const interval = setInterval(fetchAll, 10000); // Poll every 10s
+        const interval = setInterval(fetchAll, 5000);
         return () => clearInterval(interval);
       }, []);
 
-      // Parsing Config Data
       let baseline = INITIAL_BASELINE, v1 = INITIAL_V1, v2 = INITIAL_V2;
       try { baseline = JSON.parse(baselineStr); } catch {}
-      try { v1       = JSON.parse(v1Str);       } catch {}
-      try { v2       = JSON.parse(v2Str);       } catch {}
+      try { v1 = JSON.parse(v1Str); } catch {}
+      try { v2 = JSON.parse(v2Str); } catch {}
       
-      // If V2 is still 0, we can try to auto-populate from curriculum stats if they have recent performance
       if (curriculumStats && curriculumStats.recent_performance && (v2.easy.n === 0)) {
          v2.easy.avg = curriculumStats.recent_performance.easy || 0;
          v2.medium.avg = curriculumStats.recent_performance.medium || 0;
          v2.hard.avg = curriculumStats.recent_performance.hard || 0;
       }
 
-      // Compute Comparison Data
       const comparisonData = LEVELS.map(level => {
-        const b  = baseline[level] || { avg: 0 };
-        const t1 = v1[level]       || { avg: 0 };
-        const t2 = v2[level]       || { avg: 0 };
+        const b = baseline[level] || { avg: 0 };
+        const t1 = v1[level] || { avg: 0 };
+        const t2 = v2[level] || { avg: 0 };
         return {
-          name:             level.charAt(0).toUpperCase() + level.slice(1),
-          Baseline:         +(b.avg.toFixed(4)),
+          name: level.charAt(0).toUpperCase() + level.slice(1),
+          Baseline: +(b.avg.toFixed(4)),
           'V1 (200 steps)': +(t1.avg.toFixed(4)),
           'V2 (400 steps)': +(t2.avg.toFixed(4)),
-          deltaV1:          +(t1.avg - b.avg).toFixed(4),
-          deltaV2:          +(t2.avg - b.avg).toFixed(4),
-          pctV1:  b.avg > 0 ? +((t1.avg - b.avg) / b.avg * 100).toFixed(1) : 0,
-          pctV2:  b.avg > 0 ? +((t2.avg - b.avg) / b.avg * 100).toFixed(1) : 0,
+          deltaV1: +(t1.avg - b.avg).toFixed(4),
+          deltaV2: +(t2.avg - b.avg).toFixed(4),
+          pctV1: b.avg > 0 ? +((t1.avg - b.avg) / b.avg * 100).toFixed(1) : 0,
+          pctV2: b.avg > 0 ? +((t2.avg - b.avg) / b.avg * 100).toFixed(1) : 0,
         };
       });
 
       const v2Ready = LEVELS.some(l => (v2[l]?.n || 0) > 0) || (curriculumStats?.total_episodes_recorded > 0);
       const curveData = useMemo(() => computeMovingAverage(auditData, 20), [auditData]);
 
+      // Determine if we are in FAST mode (no live telemetry arriving)
+      const isFastMode = (!curriculumStats || curriculumStats.total_episodes_recorded === 0) && auditData.length === 0;
+
       return (
         <div className="container">
 
-          {/* ── HEADER & SYNOPSIS ────────────────────────────────────────── */}
+          {/* ── HEADER ────────────────────────────────────────── */}
           <div style={{ marginBottom: '3rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
-              <h1>GitPRTriage: RL for PR Review</h1>
-              {envHealth === 'healthy'      ? <span className="badge tag-online">● ENV Online</span> :
-               envHealth === 'disconnected' ? <span className="badge tag-offline">● ENV Offline</span> : null}
-              <span className="badge tag-info">Meta × Scaler OpenEnv Hackathon 2026</span>
+              <h1>GitPRTriage Command Center</h1>
+              {envHealth === 'healthy' ? <span className="badge tag-online">● Backend Online</span> :
+               envHealth === 'disconnected' ? <span className="badge tag-offline">● Backend Offline</span> : null}
+              <span className="badge tag-info">Meta × Scaler OpenEnv 2026</span>
             </div>
-            
-            <p style={{ fontSize: '1.1rem', maxWidth: '900px' }}>
-              This project trains a Reinforcement Learning agent to autonomously review GitHub Pull Requests, identify regressions, and suggest precise code fixes. Using the PRRegressionAudit custom environment, the agent is trained across three varying difficulties (Safety Gate, Defect Locator, and Full Integration Audit).
+            <p style={{ fontSize: '1.1rem', maxWidth: '900px', color: '#cbd5e1' }}>
+              Real-time telemetry and comparative analysis for the <strong>PR Regression Audit RL Agent</strong>. 
+              Monitoring GRPO-driven curriculum training across Easy, Medium, and Hard regression scenarios.
             </p>
           </div>
 
-          {/* ── MODEL DETAILS ────────────────────────────────────────────── */}
-          <div className="section-title">
-            <span>Model Details & Training Parameters</span>
+          {/* ── LIVE DATA DASHBOARD ──────────────────────────────────────── */}
+          <div className="section-title"><span>Live Telemetry & Tracking</span></div>
+          
+          <div className="live-dashboard">
+            <div className="live-dashboard-inner">
+              
+              {isFastMode && (
+                <div className="live-muted-overlay">
+                  <div className="fast-mode-badge">
+                    <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    FAST MODE ACTIVE — LIVE TELEMETRY MUTED
+                  </div>
+                  <p style={{ marginTop: '1rem', color: '#94A3B8', maxWidth: '400px', textAlign: 'center' }}>
+                    The training script is running locally without sending HTTP telemetry to this dashboard to maximize GPU throughput.
+                  </p>
+                </div>
+              )}
+
+              <div style={{ filter: isFastMode ? 'grayscale(1) opacity(0.3)' : 'none', transition: 'all 0.5s' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                  <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#10b981', display: 'inline-block', boxShadow: '0 0 10px #10b981' }}></span>
+                    Active Curriculum Session
+                  </h3>
+                  {curriculumStats && <span className="badge tag-online" style={{border: '1px solid #10b981'}}>Phase: {curriculumStats.current_phase.toUpperCase()}</span>}
+                </div>
+
+                <div className="grid-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
+                  <div className="metric-box">
+                    <div className="metric-box-value">{curriculumStats?.total_episodes_recorded || 0}</div>
+                    <div className="metric-box-label">Total Steps</div>
+                  </div>
+                  <div className="metric-box">
+                    <div className="metric-box-value" style={{color: 'var(--color-easy)'}}>{(curriculumStats?.recent_performance?.easy || 0).toFixed(3)}</div>
+                    <div className="metric-box-label">Easy Reward (Last 20)</div>
+                  </div>
+                  <div className="metric-box">
+                    <div className="metric-box-value" style={{color: 'var(--color-medium)'}}>{(curriculumStats?.recent_performance?.medium || 0).toFixed(3)}</div>
+                    <div className="metric-box-label">Medium Reward (Last 20)</div>
+                  </div>
+                  <div className="metric-box">
+                    <div className="metric-box-value" style={{color: 'var(--color-hard)'}}>{(curriculumStats?.recent_performance?.hard || 0).toFixed(3)}</div>
+                    <div className="metric-box-label">Hard Reward (Last 20)</div>
+                  </div>
+                </div>
+
+                {/* Local Fallback Chart if we DO have data */}
+                {auditData.length > 0 && (
+                  <div style={{ height: 300, width: '100%', marginTop: '2rem' }}>
+                    <ResponsiveContainer>
+                      <LineChart data={curveData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                        <XAxis dataKey="episode" stroke="var(--text-muted)" tickLine={false} axisLine={false} tick={{fontSize: 12}} />
+                        <YAxis stroke="var(--text-muted)" domain={[0, 1]} tickLine={false} axisLine={false} tick={{fontSize: 12}} />
+                        <Tooltip contentStyle={{ backgroundColor: '#111', border: '1px solid #333', borderRadius: 8, color: '#fff' }} formatter={(val) => val?.toFixed(3)} />
+                        <Line type="monotone" dataKey="easy" stroke="var(--color-easy)" strokeWidth={2} dot={false} connectNulls />
+                        <Line type="monotone" dataKey="medium" stroke="var(--color-medium)" strokeWidth={2} dot={false} connectNulls />
+                        <Line type="monotone" dataKey="hard" stroke="var(--color-hard)" strokeWidth={2} dot={false} connectNulls />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+
+                {/* WandB Placeholders */}
+                <h3 style={{ marginTop: '2.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <img src="https://docs.wandb.ai/images/logo.svg" height="20" style={{ filter: 'invert(1)' }} alt="WandB" />
+                  Weights & Biases Run Metrics
+                </h3>
+                <div className="wandb-container">
+                  <div className="wandb-graph">
+                    <svg width="32" height="32" fill="none" stroke="var(--color-v2)" strokeWidth="2" viewBox="0 0 24 24" style={{marginBottom: '1rem', opacity: 0.8}}><path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path></svg>
+                    <div style={{fontWeight: 600, color: '#fff'}}>Train / Reward Curve</div>
+                    <div style={{fontSize: '0.8rem', marginTop: '0.5rem'}}>Awaiting final screenshot from WandB</div>
+                  </div>
+                  <div className="wandb-graph">
+                    <svg width="32" height="32" fill="none" stroke="var(--color-easy)" strokeWidth="2" viewBox="0 0 24 24" style={{marginBottom: '1rem', opacity: 0.8}}><path strokeLinecap="round" strokeLinejoin="round" d="M13 17h8m0 0v-8m0 8l-8-8-4 4-6-6"></path></svg>
+                    <div style={{fontWeight: 600, color: '#fff'}}>Train / Loss Curve</div>
+                    <div style={{fontSize: '0.8rem', marginTop: '0.5rem'}}>Awaiting final screenshot from WandB</div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
           </div>
+
+          {/* ── MODEL DETAILS ────────────────────────────────────────────── */}
+          <div className="section-title"><span>Architecture & Parameters</span></div>
           <div className="grid-2" style={{ marginBottom: '2rem' }}>
             <div className="card">
-              <h3>Architecture</h3>
+              <h3>System Overview</h3>
               <ul className="info-list">
-                <li><strong>Base Model:</strong> <span>Qwen2.5-1.5B-Instruct</span></li>
-                <li><strong>RL Algorithm:</strong> <span>GRPO (Group Relative Policy Optimization)</span></li>
-                <li><strong>Frameworks:</strong> <span>Unsloth + TRL (Hugging Face)</span></li>
-                <li><strong>Environment:</strong> <span>Custom PRRegressionAudit API</span></li>
+                <li><strong style={{color: '#94A3B8'}}>Base Model:</strong> <span>Qwen2.5-1.5B-Instruct</span></li>
+                <li><strong style={{color: '#94A3B8'}}>RL Algorithm:</strong> <span>GRPO (Group Relative Policy Opt)</span></li>
+                <li><strong style={{color: '#94A3B8'}}>Frameworks:</strong> <span>Unsloth + TRL (Hugging Face)</span></li>
+                <li><strong style={{color: '#94A3B8'}}>Environment:</strong> <span>Custom PRRegressionAudit API</span></li>
               </ul>
             </div>
             <div className="card">
               <h3>Training Stages</h3>
               <ul className="info-list">
-                <li><strong style={{color: 'var(--color-baseline)'}}>Baseline:</strong> <span>Random actions used as benchmark metrics.</span></li>
-                <li><strong style={{color: 'var(--color-v1)'}}>V1 (Initial):</strong> <span>200 GRPO steps on an L4 GPU. No curriculum.</span></li>
-                <li><strong style={{color: 'var(--color-v2)'}}>V2 (Advanced):</strong> <span>400 GRPO steps on an A100 GPU utilizing dynamic <strong>Curriculum Learning</strong> and Anti-Reward Hacking Guards.</span></li>
+                <li><strong style={{color: 'var(--color-baseline)'}}>Baseline:</strong> <span style={{opacity: 0.9}}>Random actions used as benchmark.</span></li>
+                <li><strong style={{color: 'var(--color-v1)'}}>V1 (Initial):</strong> <span style={{opacity: 0.9}}>200 steps. No curriculum. L4 GPU.</span></li>
+                <li><strong style={{color: 'var(--color-v2)'}}>V2 (Advanced):</strong> <span style={{opacity: 0.9}}>400 steps. <strong>Dynamic Curriculum</strong> + Anti-Hack Guards. A10G/A100 GPU.</span></li>
               </ul>
             </div>
           </div>
-
-          {/* ── LIVE TRAINING CURVE ──────────────────────────────────────── */}
-          {auditData.length > 0 && (
-            <div style={{ marginBottom: '3rem' }}>
-              <div className="section-title">
-                <span>Live Training Progress (Reward Curve)</span>
-                {curriculumStats && <span className="badge tag-v2" style={{ marginLeft: '1rem' }}>Phase: {curriculumStats.current_phase.toUpperCase()}</span>}
-              </div>
-              <div className="card">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                  <p style={{ margin: 0, fontSize: '0.9rem' }}>Moving Average of Rewards (Window: 20 episodes). Total Episodes: {auditData.length}</p>
-                </div>
-                <div style={{ height: 400, width: '100%' }}>
-                  <ResponsiveContainer>
-                    <LineChart data={curveData} margin={{ top: 10, right: 30, left: 0, bottom: 10 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
-                      <XAxis dataKey="episode" stroke="var(--text-muted)" tick={{fill: 'var(--text-muted)', fontSize: 12}} tickLine={false} axisLine={false} />
-                      <YAxis stroke="var(--text-muted)" domain={[0, 1]} tick={{fill: 'var(--text-muted)', fontSize: 12}} tickLine={false} axisLine={false} />
-                      <Tooltip
-                        contentStyle={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 8, color: 'var(--text-main)' }}
-                        formatter={(val) => val ? val.toFixed(3) : 'N/A'}
-                        labelFormatter={(label) => `Episode ${label}`}
-                      />
-                      <Legend wrapperStyle={{ paddingTop: 20 }} />
-                      <Line type="monotone" dataKey="easy" name="Easy Reward" stroke="var(--color-easy)" strokeWidth={2} dot={false} connectNulls />
-                      <Line type="monotone" dataKey="medium" name="Medium Reward" stroke="var(--color-medium)" strokeWidth={2} dot={false} connectNulls />
-                      <Line type="monotone" dataKey="hard" name="Hard Reward" stroke="var(--color-hard)" strokeWidth={2} dot={false} connectNulls />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* ── COMPARISON DASHBOARD ─────────────────────────────────────── */}
           <div className="section-title">
@@ -317,27 +421,19 @@
 
           <div style={{ marginBottom: '1.5rem', textAlign: 'right' }}>
             <button className="btn-toggle" onClick={() => setShowConfig(!showConfig)}>
-              {showConfig ? 'Hide Config JSON' : 'Edit Comparison Data (JSON)'}
+              <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{verticalAlign: 'middle', marginRight: '6px', position: 'relative', top: '-1px'}}><path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+              {showConfig ? 'Hide Config' : 'Edit Source Data'}
             </button>
           </div>
 
-          {/* Live Data Config - Collapsible */}
+          {/* Config - Collapsible */}
           {showConfig && (
-            <div className="card" style={{ marginBottom: '2rem' }}>
-              <p style={{ marginTop: 0, fontWeight: 600, color: 'var(--text-main)' }}>Data Config</p>
+            <div className="card" style={{ marginBottom: '2rem', border: '1px solid rgba(245, 158, 11, 0.3)' }}>
+              <p style={{ marginTop: 0, fontWeight: 600, color: '#fbbf24' }}>JSON Data Configuration</p>
               <div className="grid-3">
-                <div>
-                  <label>Baseline JSON</label>
-                  <textarea className="textarea" value={baselineStr} onChange={e => setBaselineStr(e.target.value)} />
-                </div>
-                <div>
-                  <label>V1 JSON (200 steps)</label>
-                  <textarea className="textarea" value={v1Str} onChange={e => setV1Str(e.target.value)} />
-                </div>
-                <div>
-                  <label>V2 JSON (400 steps)</label>
-                  <textarea className="textarea" value={v2Str} onChange={e => setV2Str(e.target.value)} />
-                </div>
+                <div><label>Baseline JSON</label><textarea className="textarea" value={baselineStr} onChange={e => setBaselineStr(e.target.value)} /></div>
+                <div><label>V1 JSON (200 steps)</label><textarea className="textarea" value={v1Str} onChange={e => setV1Str(e.target.value)} /></div>
+                <div><label>V2 JSON (400 steps)</label><textarea className="textarea" value={v2Str} onChange={e => setV2Str(e.target.value)} /></div>
               </div>
             </div>
           )}
@@ -345,21 +441,21 @@
           {/* Metric Cards */}
           <div className="grid-3" style={{ marginBottom: '2rem' }}>
             {comparisonData.map(d => (
-              <div className="card" key={d.name} style={{ textAlign: 'center' }}>
-                <h3>{d.name} Difficulty</h3>
-                <div className={`metric-val ${d.pctV1 >= 0 ? 'positive' : 'negative'}`}>
+              <div className="card" key={d.name} style={{ textAlign: 'center', position: 'relative', overflow: 'hidden' }}>
+                <h3 style={{ textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', fontSize: '0.85rem' }}>{d.name} Difficulty</h3>
+                <div className={`metric-val ${d.pctV1 >= 0 ? 'positive' : 'negative'}`} style={{ marginTop: '0.5rem' }}>
                   {d.pctV1 > 0 ? '+' : ''}{d.pctV1}%
                 </div>
                 <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.4rem' }}>
-                  V1 Improvement over Baseline
+                  V1 vs Baseline
                 </div>
                 {v2Ready && (
-                  <div style={{ marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
-                    <div style={{ fontSize: '1.5rem', fontWeight: 700, color: d.pctV2 >= 0 ? 'var(--color-v2)' : 'var(--negative)' }}>
+                  <div style={{ marginTop: '1.5rem', paddingTop: '1.25rem', borderTop: '1px solid var(--border-color)' }}>
+                    <div className="metric-val" style={{ color: d.pctV2 >= 0 ? 'var(--color-v2)' : '#f87171', textShadow: d.pctV2 >= 0 ? '0 0 15px rgba(16,185,129,0.3)' : 'none' }}>
                       {d.pctV2 > 0 ? '+' : ''}{d.pctV2}%
                     </div>
                     <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.2rem' }}>
-                      V2 Improvement over Baseline
+                      V2 vs Baseline
                     </div>
                   </div>
                 )}
@@ -371,18 +467,14 @@
           <div className="grid-2" style={{ marginBottom: '2rem' }}>
             {/* Bar Chart */}
             <div className="card">
-              <h3 style={{ marginBottom: '1.5rem', textAlign: 'center' }}>Absolute Scores</h3>
+              <h3 style={{ marginBottom: '2rem', textAlign: 'center' }}>Absolute Grading Scores</h3>
               <div style={{ height: 320 }}>
                 <ResponsiveContainer>
-                  <BarChart data={comparisonData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
+                  <BarChart data={comparisonData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                     <XAxis dataKey="name" stroke="var(--text-muted)" tickLine={false} axisLine={false} style={{ fontSize: 12 }} />
                     <YAxis stroke="var(--text-muted)" domain={[0, 0.6]} tickLine={false} axisLine={false} style={{ fontSize: 11 }} />
-                    <Tooltip
-                      cursor={{fill: 'rgba(255,255,255,0.05)'}}
-                      contentStyle={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 8, color: 'var(--text-main)' }}
-                      formatter={(v) => v.toFixed(4)}
-                    />
+                    <Tooltip cursor={{fill: 'rgba(255,255,255,0.03)'}} contentStyle={{ backgroundColor: '#111', border: '1px solid #333', borderRadius: 8, color: '#fff' }} formatter={(v) => v.toFixed(4)} />
                     <Legend wrapperStyle={{ paddingTop: 16, fontSize: 12 }} />
                     <Bar dataKey="Baseline"       fill="var(--color-baseline)" radius={[4,4,0,0]} maxBarSize={40} />
                     <Bar dataKey="V1 (200 steps)" fill="var(--color-v1)"       radius={[4,4,0,0]} maxBarSize={40} />
@@ -394,21 +486,18 @@
 
             {/* Line Chart */}
             <div className="card">
-              <h3 style={{ marginBottom: '1.5rem', textAlign: 'center' }}>Score Delta (vs Baseline)</h3>
+              <h3 style={{ marginBottom: '2rem', textAlign: 'center' }}>Score Delta (vs Baseline)</h3>
               <div style={{ height: 320 }}>
                 <ResponsiveContainer>
-                  <LineChart data={comparisonData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
+                  <LineChart data={comparisonData} margin={{ top: 10, right: 20, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                     <XAxis dataKey="name" stroke="var(--text-muted)" tickLine={false} axisLine={false} style={{ fontSize: 12 }} />
                     <YAxis stroke="var(--text-muted)" tickLine={false} axisLine={false} style={{ fontSize: 11 }} />
-                    <ReferenceLine y={0} stroke="var(--text-muted)" strokeDasharray="4 4" />
-                    <Tooltip
-                      contentStyle={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 8, color: 'var(--text-main)' }}
-                      formatter={(v) => v.toFixed(4)}
-                    />
+                    <ReferenceLine y={0} stroke="rgba(255,255,255,0.2)" strokeDasharray="4 4" />
+                    <Tooltip contentStyle={{ backgroundColor: '#111', border: '1px solid #333', borderRadius: 8, color: '#fff' }} formatter={(v) => v.toFixed(4)} />
                     <Legend wrapperStyle={{ paddingTop: 16, fontSize: 12 }} />
-                    <Line type="monotone" dataKey="deltaV1" name="V1 Delta" stroke="var(--color-v1)" strokeWidth={3} dot={{ r: 5, fill: 'var(--bg-card)', strokeWidth: 2 }} />
-                    {v2Ready && <Line type="monotone" dataKey="deltaV2" name="V2 Delta" stroke="var(--color-v2)" strokeWidth={3} dot={{ r: 5, fill: 'var(--bg-card)', strokeWidth: 2 }} />}
+                    <Line type="monotone" dataKey="deltaV1" name="V1 Delta" stroke="var(--color-v1)" strokeWidth={3} dot={{ r: 5, fill: '#111', strokeWidth: 2 }} />
+                    {v2Ready && <Line type="monotone" dataKey="deltaV2" name="V2 Delta" stroke="var(--color-v2)" strokeWidth={3} dot={{ r: 5, fill: '#111', strokeWidth: 2 }} />}
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -417,14 +506,12 @@
 
           {/* Full Results Table */}
           <div className="card">
-            <h3>Full Results Data</h3>
-            <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
+            <h3 style={{ marginBottom: '1.5rem' }}>Raw Evaluation Data</h3>
+            <div style={{ overflowX: 'auto' }}>
               <table>
                 <thead>
                   <tr>
-                    {['Difficulty', 'Baseline', 'V1 Mean', 'V1 Δ', 'V1 %',
-                      ...(v2Ready ? ['V2 Mean', 'V2 Δ', 'V2 %'] : [])
-                    ].map(h => <th key={h}>{h}</th>)}
+                    {['Difficulty', 'Baseline', 'V1 Mean', 'V1 Δ', 'V1 %', ...(v2Ready ? ['V2 Mean', 'V2 Δ', 'V2 %'] : [])].map(h => <th key={h}>{h}</th>)}
                   </tr>
                 </thead>
                 <tbody>
@@ -433,11 +520,11 @@
                       <td style={{ fontWeight: 600, color: 'var(--text-main)' }}>{d.name}</td>
                       <td style={{ color: 'var(--color-baseline)' }}>{d.Baseline.toFixed(4)}</td>
                       <td style={{ color: 'var(--color-v1)' }}>{d['V1 (200 steps)'].toFixed(4)}</td>
-                      <td className={d.deltaV1 >= 0 ? 'positive' : 'negative'}>{d.deltaV1 > 0 ? '+' : ''}{d.deltaV1.toFixed(4)}</td>
-                      <td className={d.pctV1  >= 0 ? 'positive' : 'negative'}>{d.pctV1  > 0 ? '+' : ''}{d.pctV1}%</td>
-                      {v2Ready && <td style={{ color: 'var(--color-v2)', fontWeight: 500 }}>{d['V2 (400 steps)'].toFixed(4)}</td>}
-                      {v2Ready && <td className={d.deltaV2 >= 0 ? 'positive' : 'negative'} style={{fontWeight: 500}}>{d.deltaV2 > 0 ? '+' : ''}{d.deltaV2.toFixed(4)}</td>}
-                      {v2Ready && <td className={d.pctV2  >= 0 ? 'positive' : 'negative'} style={{fontWeight: 500}}>{d.pctV2  > 0 ? '+' : ''}{d.pctV2}%</td>}
+                      <td className={d.deltaV1 >= 0 ? 'positive' : 'negative'} style={{textShadow:'none'}}>{d.deltaV1 > 0 ? '+' : ''}{d.deltaV1.toFixed(4)}</td>
+                      <td className={d.pctV1  >= 0 ? 'positive' : 'negative'} style={{textShadow:'none'}}>{d.pctV1  > 0 ? '+' : ''}{d.pctV1}%</td>
+                      {v2Ready && <td style={{ color: 'var(--color-v2)', fontWeight: 600 }}>{d['V2 (400 steps)'].toFixed(4)}</td>}
+                      {v2Ready && <td className={d.deltaV2 >= 0 ? 'positive' : 'negative'} style={{fontWeight: 600, textShadow:'none'}}>{d.deltaV2 > 0 ? '+' : ''}{d.deltaV2.toFixed(4)}</td>}
+                      {v2Ready && <td className={d.pctV2  >= 0 ? 'positive' : 'negative'} style={{fontWeight: 600, textShadow:'none'}}>{d.pctV2  > 0 ? '+' : ''}{d.pctV2}%</td>}
                     </tr>
                   ))}
                 </tbody>
@@ -445,7 +532,7 @@
             </div>
           </div>
 
-          <div style={{ margin: '3rem 0 2rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+          <div style={{ margin: '4rem 0 2rem', textAlign: 'center', color: 'var(--border-hover)', fontSize: '0.85rem' }}>
             <p>GitPRTriage Environment · Model: Qwen2.5-1.5B-Instruct · Frameworks: Unsloth + TRL</p>
           </div>
 

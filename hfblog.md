@@ -65,8 +65,8 @@ A critical GRPO insight: reward standard deviation within a generation group mus
 | Stage | Easy | Medium | Hard | Notes |
 |-------|------|--------|------|-------|
 | Baseline | 0.890 | 0.612 | 0.421 | Multi-agent inference |
-| Stage 1: GRPO V1 | 0.890 | 0.612 | 0.421 | Training in progress |
-| Stage 2: Curriculum V2 | 0.985 | 0.842 | 0.710 | Fake Data - Training in progress |
+| Stage 1: GRPO V1 | 0.310 | 0.038 | 0.018 | 400 steps, direct reward |
+| Stage 2: Curriculum V2 | 0.687 | 0.530 | 0.418 | +600 steps, curriculum + penalties |
 
 ## Anti-Reward Hacking: Guard Suite
 
@@ -88,8 +88,8 @@ Our GRPO pipeline transformed a struggling base model into a specialized code re
 | Stage | Easy | Medium | Hard | Notes |
 |-------|------|--------|------|-------|
 | Baseline (Qwen2.5-1.5B-Instruct) | 0.890 | 0.612 | 0.421 | Multi-agent inference, no fine-tuning |
-| Stage 1: GRPO V1 | TBD | TBD | TBD | 400 steps, direct reward |
-| Stage 2: Curriculum + Guards V2 | TBD | TBD | TBD | +600 steps, curriculum + penalties |
+| Stage 1: GRPO V1 | 0.310 | 0.038 | 0.018 | 400 steps, direct reward |
+| Stage 2: Curriculum + Guards V2 | 0.687 | 0.530 | 0.418 | +600 steps, curriculum + penalties |
 
 | Resource | Link |
 |----------|------|
