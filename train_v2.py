@@ -10,6 +10,7 @@
 #     "huggingface_hub",
 #     "requests",
 #     "numpy",
+#     "wandb",
 # ]
 # ///
 
@@ -327,7 +328,7 @@ def main():
         save_steps=100,
         warmup_steps=15,
         temperature=0.85,                # slightly less random than v1 (model is already trained)
-        report_to="none",
+        report_to="wandb",
     )
 
     trainer = GRPOTrainer(
