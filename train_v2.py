@@ -296,6 +296,20 @@ def evaluate_and_save(model, tokenizer, dataset):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
+    import wandb
+    wandb.init(
+        project="pr-regression-audit-grpo",
+        name="v2-curriculum-600steps",
+        config={
+            "base_model": BASE_MODEL,
+            "v1_adapter": V1_ADAPTER,
+            "max_steps": 600,
+            "learning_rate": 2e-6,
+            "temperature": 0.85,
+            "num_generations": 4,
+            "curriculum": "easy×3 → medium×2 → hard×1",
+        }
+    )
     print(f"Loading base model: {BASE_MODEL}")
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=BASE_MODEL,
