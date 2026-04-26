@@ -76,7 +76,7 @@ class CurriculumSampler:
                              evaluating phase transitions. Default is 10.
         """
         self._issues: Dict[str, List[dict]] = issues_by_level
-        self._history: deque = deque(maxlen=50)
+        self._history: deque = deque(maxlen=10000)
         self._phase: str = "bootstrap"
         self._episode: int = 0
         self._last_issue_id: Optional[str] = None

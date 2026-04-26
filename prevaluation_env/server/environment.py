@@ -264,9 +264,9 @@ class PRRegressionAuditEnvironment:
         """Returns live curriculum progression stats. Used by /curriculum endpoint."""
         return self._curriculum.get_stats()
 
-    def get_recent_audit(self, n: int = 20) -> list:
+    def get_recent_audit(self, n: int = 10000) -> list:
         """Returns the last n episode records for reward-hacking detection."""
-        n = min(n, 50)
+        n = min(n, 10000)
         return list(self._curriculum._history)[-n:]
 
     def get_guard_summary(self) -> dict:

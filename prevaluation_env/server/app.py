@@ -101,7 +101,7 @@ def curriculum_stats():
 
 
 @app.get("/audit")
-def audit_log(n: int = 20):
+def audit_log(n: int = 10000):
     """Recent episode audit log for reward-hacking detection.
 
     Returns the last n episode records. Each record contains:
